@@ -70,6 +70,7 @@ npx --yes github:Kanaliseren/claudex update
 
 `update` and `upgrade` first update Claude Code through its native latest channel,
 then stage the newest compatibility-tested CLIProxyAPI build bundled with Claudex.
+`integrate t3` also registers native manifest models that T3 has not bundled yet.
 
 This project deliberately does not activate an arbitrary newest upstream build.
 Each package release pins exact binaries and checksums. `upgrade` stages the

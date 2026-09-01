@@ -43,6 +43,7 @@ test("T3 integration updates only the Claude environment and protects the token"
       claudeAgent: {
         driver: "claudeAgent",
         future: 42,
+        config: { futureConfig: true, customModels: ["company-private-model"] },
         environment: [
           { name: "KEEP_ME", value: "yes", sensitive: false },
           { name: "ANTHROPIC_AUTH_TOKEN", value: "old", sensitive: true, valueRedacted: true },
@@ -59,6 +60,10 @@ test("T3 integration updates only the Claude environment and protects the token"
   const env = Object.fromEntries(updated.providerInstances.claudeAgent.environment.map((entry) => [entry.name, entry]));
 
   assert.equal(updated.providerInstances.claudeAgent.future, 42);
+  assert.deepEqual(updated.providerInstances.claudeAgent.config, {
+    futureConfig: true,
+    customModels: ["company-private-model", "claude-opus-5", "claude-fable-5-1"],
+  });
   assert.deepEqual(updated.providerInstances.futureProvider, { keep: true });
   assert.equal(env.KEEP_ME.value, "yes");
   assert.equal(env.ANTHROPIC_BASE_URL.value, "http://127.0.0.1:18418");

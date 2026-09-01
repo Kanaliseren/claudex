@@ -54,7 +54,20 @@ export async function integrateT3(paths, manifest, configPath) {
   if (provider.environment.some((entry) => !entry || typeof entry.name !== "string")) {
     throw new Error("unsupported T3 Code config: malformed Claude environment entry");
   }
+  if (provider.config !== undefined && (!provider.config || typeof provider.config !== "object" || Array.isArray(provider.config))) {
+    throw new Error("unsupported T3 Code config: Claude provider config must be an object");
+  }
+  if (provider.config?.customModels !== undefined && (!Array.isArray(provider.config.customModels) || provider.config.customModels.some((model) => typeof model !== "string" || !model))) {
+    throw new Error("unsupported T3 Code config: Claude customModels must contain model names");
+  }
   const env = await claudeEnvironment(paths, manifest);
+  const nativeModels = Object.values(manifest.models)
+    .filter((model) => model.upstream === model.alias)
+    .map((model) => model.alias);
+  provider.config = {
+    ...(provider.config ?? {}),
+    customModels: [...new Set([...(provider.config?.customModels ?? []), ...nativeModels])],
+  };
   for (const name of [
     "ANTHROPIC_BASE_URL",
     "ANTHROPIC_MODEL",

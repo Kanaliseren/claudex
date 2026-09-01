@@ -1,6 +1,6 @@
 {
   "name": "claudex",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Run Claude Code through your local Codex OAuth session via CLIProxyAPI",
   "type": "module",
   "bin": {
@@ -10,6 +10,7 @@
   "files": [
     "bin",
     "channel",
+    "docs",
     "scripts",
     "src",
     "LICENSE",
@@ -20,6 +21,7 @@
     "test": "node --test",
     "check": "node --check bin/claudex.js && node --test && npm pack --dry-run",
     "check:upstreams": "node scripts/check-upstreams.mjs",
+    "promote:proxy": "node scripts/promote-proxy.mjs",
     "verify:assets": "node scripts/verify-stable-assets.mjs"
   },
   "engines": {

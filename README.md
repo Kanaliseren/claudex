@@ -100,6 +100,8 @@ Code releases are used immediately and retain the Tool Search override required
 for a custom proxy URL; `doctor` warns when a release has not yet been added to
 the validation matrix.
 
-The current stable channel is based on CLIProxyAPI `v7.2.131` and has been
-tested end-to-end with Claude Code `2.1.226`, `2.1.228`, and `2.1.231`, including
-direct requests, native subagents, deferred MCP ToolSearch, and prompt-cache reuse.
+The current stable channel is based on CLIProxyAPI `v7.2.147` and has been
+tested end-to-end with Claude Code `2.1.257`, including Fable 5.1.
+
+Maintainers: follow [`docs/updating.md`](docs/updating.md) when promoting a proxy
+or Claude Code release.

@@ -6,7 +6,7 @@ const [proxy, claude] = await Promise.all([
   json("https://api.github.com/repos/router-for-me/CLIProxyAPI/releases/latest"),
   json("https://registry.npmjs.org/@anthropic-ai%2fclaude-code/latest"),
 ]);
-const testedProxy = manifest.proxy.version.replace(/-cacheopt\.\d+$/, "");
+const testedProxy = manifest.proxy.upstreamVersion ?? manifest.proxy.version.replace(/-(?:cacheopt|claudex)\.\d+$/, "");
 const testedClaude = manifest.compatibility.claudeCode.tested.at(-1);
 const changes = [];
 if (proxy.tag_name !== testedProxy) changes.push(`CLIProxyAPI ${testedProxy} -> ${proxy.tag_name}`);

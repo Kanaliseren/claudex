@@ -18,7 +18,7 @@ test("stable channel routes Sonnet and Haiku through Codex while Opus and Fable 
   assert.deepEqual(stable.models.sol.aliases, ["claude-sonnet-5"]);
   assert.equal(stable.models.terra.alias, "claude-haiku-4-5");
   assert.equal(stable.models.opus.upstream, "claude-opus-5");
-  assert.equal(stable.models.fable.upstream, "claude-fable-5");
+  assert.equal(stable.models.fable.upstream, "claude-fable-5-1");
 });
 
 test("setup config is loopback-only and preserves its generated key", async (t) => {
@@ -33,8 +33,9 @@ test("setup config is loopback-only and preserves its generated key", async (t) 
   const config = await readFile(paths.proxyConfig, "utf8");
   assert.match(config, /name: "gpt-5\.6-sol"\n      alias: "claude-sonnet-5"/);
   assert.match(config, /name: "gpt-5\.6-terra"\n      alias: "claude-haiku-4-5"/);
+  assert.match(config, /user-agent: "claude-cli\/2\.1\.257 \(external, cli\)"/);
   assert.doesNotMatch(config, /alias: "claude-opus-5"/);
-  assert.doesNotMatch(config, /alias: "claude-fable-5"/);
+  assert.doesNotMatch(config, /alias: "claude-fable-5-1"/);
   assert.deepEqual(summary, {
     host: "127.0.0.1",
     port: 18418,

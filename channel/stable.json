@@ -2,45 +2,46 @@
   "schemaVersion": 1,
   "channel": "stable",
   "proxy": {
-    "version": "v7.2.131-cacheopt.1",
-    "commit": "9efbdcd2e8f7a770f884330d788141fc4f8f2508",
+    "version": "v7.2.147-claudex.1",
+    "upstreamVersion": "v7.2.147",
+    "commit": "2af596f087d63d1bd144349744e1f812ce40d0d5",
     "repository": "Kanaliseren/CLIProxyAPI",
-    "tag": "v7.2.131-cacheopt.1",
+    "tag": "v7.2.147-claudex.1",
     "assets": {
       "linux-x64": {
-        "url": "https://github.com/Kanaliseren/CLIProxyAPI/releases/download/v7.2.131-cacheopt.1/cli-proxy-api-linux-x64.gz",
-        "sha256": "fbb9bbac89b5c8ceb15ff63494283c1d17dc11f16070ba3b3c070a10b9ef19b0",
+        "url": "https://github.com/Kanaliseren/CLIProxyAPI/releases/download/v7.2.147-claudex.1/cli-proxy-api-linux-x64.gz",
+        "sha256": "87b2980f13ea3e0f4aa45f2283d0fd67dd416f831b1f3fbad09353646a1e9d94",
         "compression": "gzip",
-        "archiveSha256": "1083a1fd7b0274721528e3da4db6e595f81508a483fee4eb83e073f78123374b",
-        "archiveBytes": 20633357
+        "archiveSha256": "050346366daf5849cd7b1127afd23a3986932ae5f01f03deaacae950fa546a9b",
+        "archiveBytes": 21054661
       },
       "linux-arm64": {
-        "url": "https://github.com/Kanaliseren/CLIProxyAPI/releases/download/v7.2.131-cacheopt.1/cli-proxy-api-linux-arm64.gz",
-        "sha256": "34d92ed8e95f6cbcc347af055eecb9c4a8ad0207a84ec479ac0d9c8889750b4c",
+        "url": "https://github.com/Kanaliseren/CLIProxyAPI/releases/download/v7.2.147-claudex.1/cli-proxy-api-linux-arm64.gz",
+        "sha256": "6cfbc88bab2586fd8d1c4c340bfbe626a5a568381d7c5f83fc520eac125a66ef",
         "compression": "gzip",
-        "archiveSha256": "ce0bfec129f381ecda29f039b0b2f2d591ae0505c769ba853e0e8b7db3be6756",
-        "archiveBytes": 18666256
+        "archiveSha256": "048a427deb256f264b68284df39eba4e6d46a6d46954c5c65613ddb5c92419a2",
+        "archiveBytes": 19035885
       },
       "darwin-x64": {
-        "url": "https://github.com/Kanaliseren/CLIProxyAPI/releases/download/v7.2.131-cacheopt.1/cli-proxy-api-darwin-x64.gz",
-        "sha256": "e6d332d19719accdfadccf38ac13e103de93139761324cfcf11d1d23d7f48257",
+        "url": "https://github.com/Kanaliseren/CLIProxyAPI/releases/download/v7.2.147-claudex.1/cli-proxy-api-darwin-x64.gz",
+        "sha256": "e47f3ab7b83b08a4376fc1cf01b260fe43f818a4f560d4dead25e6d3acec3221",
         "compression": "gzip",
-        "archiveSha256": "9ea300aef6c2aaf95a74f7f6e6ad32ab9a101bc349b50188f0513a3bccf40f09",
-        "archiveBytes": 21368564
+        "archiveSha256": "1fba0ebcb4e52a9e46c07cc97f168ce9711a5b3c178b885fc1f3457444c2cfbb",
+        "archiveBytes": 21797905
       },
       "darwin-arm64": {
-        "url": "https://github.com/Kanaliseren/CLIProxyAPI/releases/download/v7.2.131-cacheopt.1/cli-proxy-api-darwin-arm64.gz",
-        "sha256": "b868f41797b401d36155edc6501c3f6b7a0159d3dfd77584652addb488af8da2",
+        "url": "https://github.com/Kanaliseren/CLIProxyAPI/releases/download/v7.2.147-claudex.1/cli-proxy-api-darwin-arm64.gz",
+        "sha256": "5d4001fabeaed47f2543f16c7e12b4dac8fbe7915044350bbc72413bb8931d81",
         "compression": "gzip",
-        "archiveSha256": "dbb01a398e13c1f02b53f4188bef07b540a7374afbb2c76dc130ba6c2b3d3a43",
-        "archiveBytes": 19876689
+        "archiveSha256": "80034462b31ffe0a7c07bc64454364680f1738a26faadba04f5b8971fa29057e",
+        "archiveBytes": 20256484
       },
       "win32-x64": {
-        "url": "https://github.com/Kanaliseren/CLIProxyAPI/releases/download/v7.2.131-cacheopt.1/cli-proxy-api-win32-x64.exe.gz",
-        "sha256": "9fd31e365fe1d6f33a6843f5d34b9381c044df9fddc95ab34a4493c5a0e9c448",
+        "url": "https://github.com/Kanaliseren/CLIProxyAPI/releases/download/v7.2.147-claudex.1/cli-proxy-api-win32-x64.gz",
+        "sha256": "f709c79073bbfe96c59b8ce3dfdfa98a4c1a7843ea8b7225176bbea5cb633ed5",
         "compression": "gzip",
-        "archiveSha256": "ea59d071633b0701267450a34b2a30da711358ba4efe53871ff8b3ed097dca2b",
-        "archiveBytes": 21057568
+        "archiveSha256": "28fb54c3172832ffc629a61e4b48c3f0cec6b0128746f5859b28d460b035778d",
+        "archiveBytes": 21489795
       }
     }
   },
@@ -48,7 +49,9 @@
     "sol": {
       "upstream": "gpt-5.6-sol",
       "alias": "claude-sonnet-5",
-      "aliases": ["claude-sonnet-5"],
+      "aliases": [
+        "claude-sonnet-5"
+      ],
       "displayName": "Sonnet 5 (GPT-5.6 Sol)"
     },
     "terra": {
@@ -62,25 +65,41 @@
       "displayName": "Claude Opus 5"
     },
     "fable": {
-      "upstream": "claude-fable-5",
-      "alias": "claude-fable-5",
-      "displayName": "Claude Fable 5"
+      "upstream": "claude-fable-5-1",
+      "alias": "claude-fable-5-1",
+      "displayName": "Claude Fable 5.1"
     }
   },
   "compatibility": {
     "claudeCode": {
-      "tested": ["2.1.226", "2.1.228", "2.1.231"],
-      "requiredCapabilities": ["--append-system-prompt"],
-      "optionalCapabilities": ["--exclude-dynamic-system-prompt-sections"]
+      "tested": [
+        "2.1.226",
+        "2.1.228",
+        "2.1.231",
+        "2.1.257"
+      ],
+      "requiredCapabilities": [
+        "--append-system-prompt"
+      ],
+      "optionalCapabilities": [
+        "--exclude-dynamic-system-prompt-sections"
+      ]
     },
     "cliProxyAPI": {
-      "requiredCapabilities": ["-codex-login", "-codex-device-login", "-claude-login", "-config"]
+      "requiredCapabilities": [
+        "-codex-login",
+        "-codex-device-login",
+        "-claude-login",
+        "-config"
+      ]
     },
     "paseo": {
       "testedConfigSchema": 1
     },
     "t3Code": {
-      "tested": ["0.0.34-nightly.20260813.1084"],
+      "tested": [
+        "0.0.34-nightly.20260813.1084"
+      ],
       "testedConfigSchema": 1
     }
   }

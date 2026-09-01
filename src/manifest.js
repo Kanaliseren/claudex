@@ -25,6 +25,10 @@ export function validateManifest(manifest) {
       }
     }
   }
+  const testedClaude = manifest.compatibility?.claudeCode?.tested;
+  if (!Array.isArray(testedClaude) || testedClaude.length === 0) {
+    throw new Error("channel manifest must contain a tested Claude Code version");
+  }
   return manifest;
 }
 

@@ -14,6 +14,7 @@ export async function writeProxyConfig(paths, manifest, { port = 8317 } = {}) {
 export function renderProxyConfig({ paths, manifest, port, proxyKey }) {
   const sol = manifest.models.sol;
   const terra = manifest.models.terra;
+  const claudeCodeVersion = manifest.compatibility.claudeCode.tested.at(-1);
   const models = [sol, terra];
   const aliases = models.flatMap(modelAliases);
   return `# Managed by Claudex. Edit through the package, not in place.
@@ -39,6 +40,9 @@ debug: false
 logging-to-file: false
 request-log: false
 transient-error-cooldown-seconds: -1
+
+claude-header-defaults:
+  user-agent: ${yamlString(`claude-cli/${claudeCodeVersion} (external, cli)`)}
 
 oauth-excluded-models:
   claude:

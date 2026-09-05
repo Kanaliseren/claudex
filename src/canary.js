@@ -29,15 +29,15 @@ export async function runIsolatedCanary(binary, paths, manifest, { fetchImpl = f
   let spawnError;
   child.once("error", (error) => (spawnError = error));
   try {
-    const expectedModels = hasOAuth ? [manifest.models.sol.alias, manifest.models.terra.alias] : [];
+    const expectedModels = hasOAuth ? [manifest.models.astra.alias, manifest.models.sol.alias] : [];
     const models = await waitForModels(port, proxyKey, child, fetchImpl, () => spawnError, expectedModels);
     if (hasOAuth) {
       const names = extractModelNames(models);
-      for (const model of [manifest.models.sol.alias, manifest.models.terra.alias]) {
+      for (const model of [manifest.models.astra.alias, manifest.models.sol.alias]) {
         if (!names.has(model)) throw new Error(`canary model list is missing ${model}`);
       }
     }
-    if (hasOAuth) await probeOAuthMessage(port, proxyKey, manifest.models.terra.alias, fetchImpl);
+    for (const model of expectedModels) await probeOAuthMessage(port, proxyKey, model, fetchImpl);
     return { passed: true, oauthTested: hasOAuth, port };
   } finally {
     child.kill("SIGTERM");
@@ -116,7 +116,7 @@ async function probeOAuthMessage(port, proxyKey, model, fetchImpl) {
     signal: AbortSignal.timeout(90_000),
   });
   if (!response.ok) {
-    throw new Error(`Codex OAuth canary returned HTTP ${response.status}`);
+    throw new Error(`Codex OAuth canary for ${model} returned HTTP ${response.status}`);
   }
   const body = await response.json();
   if (!Array.isArray(body.content) || body.content.length === 0) {

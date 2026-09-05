@@ -39,10 +39,17 @@ test("isolated canary uses an access-only OAuth copy and exercises messages", { 
   const binary = join(root, "fake-canary.mjs");
   await writeExecutable(binary, fakeCanaryServer);
 
-  const result = await runIsolatedCanary(binary, paths, fixtureManifest());
+  const requestedModels = [];
+  const result = await runIsolatedCanary(binary, paths, fixtureManifest(), {
+    fetchImpl: (url, options) => {
+      if (options.method === "POST") requestedModels.push(JSON.parse(options.body).model);
+      return fetch(url, options);
+    },
+  });
 
   assert.equal(result.passed, true);
   assert.equal(result.oauthTested, true);
+  assert.deepEqual(requestedModels, ["claude-sonnet-5", "claude-haiku-4-5"]);
 });
 
 test("upgrade canaries a distinct build and rollback restores the exact prior binary", { skip: process.platform === "win32" }, async (t) => {
@@ -102,9 +109,9 @@ test("upgrade refreshes model aliases without changing the proxy key or port", {
     ...manifest,
     models: {
       ...manifest.models,
-      sol: {
-        ...manifest.models.sol,
-        aliases: [...manifest.models.sol.aliases, "claude-sonnet-future"],
+      astra: {
+        ...manifest.models.astra,
+        aliases: [...manifest.models.astra.aliases, "claude-sonnet-future"],
       },
     },
   };

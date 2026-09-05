@@ -75,7 +75,7 @@ export async function diagnose(paths, manifest, { live = false, fetchImpl = fetc
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const body = await response.json();
       const names = new Set((body?.data ?? []).map((model) => model.id));
-      const expected = ["sol", "terra", "opus", "fable"].map((model) => manifest.models[model].alias);
+      const expected = ["astra", "sol", "opus", "fable"].map((model) => manifest.models[model].alias);
       const missing = expected.filter((model) => !names.has(model));
       if (missing.length > 0) throw new Error(`missing model aliases: ${missing.join(", ")}`);
       add("live proxy", "pass", `${body.data.length} models; OAuth aliases present`);

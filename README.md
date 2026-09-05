@@ -2,7 +2,7 @@
 
 Run Claude Code through local Codex and Claude OAuth sessions. Claudex safely installs
 and manages the CLIProxyAPI bridge used by Claude Code, Paseo, and T3 Code. Sonnet
-routes to GPT-5.6 Sol, Haiku routes to GPT-5.6 Terra, and Opus and Fable remain native
+routes to GPT-6 Astra, Haiku routes to GPT-5.6 Sol, and Opus and Fable remain native
 Claude models with their native context windows.
 
 OAuth credentials are created locally on every machine. They are never bundled,
@@ -10,34 +10,23 @@ uploaded, copied between users, or printed by this package.
 
 ## Install
 
-Until the first npm registry release, run directly from GitHub:
+Requires Node.js 20+ and Claude Code. On a Mac, follow the
+[short setup guide](docs/mac-setup.md).
 
 ```bash
-npx --yes github:Kanaliseren/claudex setup
-npx --yes github:Kanaliseren/claudex login codex
-npx --yes github:Kanaliseren/claudex login claude
-npx --yes github:Kanaliseren/claudex doctor --live
+npm install -g github:Kanaliseren/claudex
+claudex setup
+claudex login codex
+claudex run astra
 ```
 
-Node.js 20 or newer is required for `npx`. `setup` downloads only a platform
-binary whose compressed archive and extracted executable are both pinned by
-SHA-256 in the stable-channel manifest.
+For native Opus and Fable 5.1, also run `claudex login claude` with your own
+Claude account. `claudex login` is an alias for `claudex login codex`.
 
-After npm publication:
-
-```bash
-npx --yes claudex@latest setup
-claudex login
-claudex integrate all
-```
-
-`setup` installs a checksum-pinned official CLIProxyAPI build,
-generates a loopback-only configuration, installs a user service where the
-platform supports one, and creates `~/.local/bin/claude-cliproxy`.
-
-Run `setup` and both provider logins separately on every machine and for every user.
-`claudex login` remains a compatibility alias for `claudex login codex`. Do not copy
-the generated OAuth files between machines.
+`setup` installs a checksum-pinned official CLIProxyAPI build, generates a
+loopback-only configuration, installs a user service where supported, and
+creates `~/.local/bin/claude-cliproxy`. Every person installs and logs in locally;
+share this repository, not your OAuth files.
 
 ## Commands
 
@@ -50,7 +39,7 @@ claudex upgrade [--upstream | --binary PATH] [--check [--json]]
 claudex rollback
 claudex integrate <paseo|t3|all> [--path PATH] [--with-hub|--without-hub]
 claudex claude [CLAUDE OPTIONS...]
-claudex run <sol|terra|opus|fable> [--] [CLAUDE OPTIONS...]
+claudex run <astra|sol|opus|fable> [--] [CLAUDE OPTIONS...]
 claudex models [--json]
 claudex hub [--json]
 claudex status [--json]
@@ -65,9 +54,9 @@ renaming Claudex does not invalidate local OAuth credentials.
 
 ```bash
 claudex models
-claudex run sol
+claudex run astra
 claudex run opus
-claudex run terra -- --print "Explain this function" --output-format json
+claudex run sol -- --print "Explain this function" --output-format json
 ```
 
 `models` lists the aliases and upstream models in the bundled tested channel;
@@ -75,7 +64,7 @@ it does not contact a provider or verify login. `run` selects that model through
 Claude Code's `--model` flag for one session and forwards the remaining arguments
 unchanged. An explicit later `--model` flag can override the named choice. It
 preserves Claude Code's exit status and leaves installed routing and integrations
-unchanged. Sol and Terra use Codex OAuth; Opus and Fable use native Claude OAuth.
+unchanged. Astra and Sol use Codex OAuth; Opus and Fable use native Claude OAuth.
 `claudex claude` continues to launch with the existing defaults.
 
 ## Upgrade policy

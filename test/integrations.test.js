@@ -73,9 +73,9 @@ test("T3 integration updates only the Claude environment and protects the token"
   assert.equal(env.ANTHROPIC_API_KEY.value, proxyKey);
   assert.equal(env.ANTHROPIC_API_KEY.sensitive, true);
   assert.equal(env.ANTHROPIC_API_KEY.valueRedacted, true);
-  assert.equal(env.ANTHROPIC_MODEL.value, manifest.models.sol.alias);
-  assert.equal(env.ANTHROPIC_DEFAULT_SONNET_MODEL.value, manifest.models.sol.alias);
-  assert.equal(env.ANTHROPIC_DEFAULT_HAIKU_MODEL.value, manifest.models.terra.alias);
+  assert.equal(env.ANTHROPIC_MODEL.value, manifest.models.astra.alias);
+  assert.equal(env.ANTHROPIC_DEFAULT_SONNET_MODEL.value, manifest.models.astra.alias);
+  assert.equal(env.ANTHROPIC_DEFAULT_HAIKU_MODEL.value, manifest.models.sol.alias);
   assert.equal(env.ENABLE_TOOL_SEARCH.value, "true");
   assert.equal(env.API_TIMEOUT_MS.value, "3000000");
   if (process.platform !== "win32") assert.equal((await stat(configPath)).mode & 0o777, 0o600);

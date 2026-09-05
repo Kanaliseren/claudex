@@ -15,8 +15,10 @@ test("stable channel routes Sonnet and Haiku through Codex while Opus and Fable 
     await readFile(fileURLToPath(new URL("../channel/stable.json", import.meta.url)), "utf8"),
   );
 
-  assert.deepEqual(stable.models.sol.aliases, ["claude-sonnet-5"]);
-  assert.equal(stable.models.terra.alias, "claude-haiku-4-5");
+  assert.deepEqual(stable.models.astra.aliases, ["claude-sonnet-5"]);
+  assert.equal(stable.models.astra.upstream, "gpt-6-astra");
+  assert.equal(stable.models.sol.alias, "claude-haiku-4-5");
+  assert.equal(stable.models.sol.upstream, "gpt-5.6-sol");
   assert.equal(stable.models.opus.upstream, "claude-opus-5");
   assert.equal(stable.models.fable.upstream, "claude-fable-5-1");
 });
@@ -31,8 +33,8 @@ test("setup config is loopback-only and preserves its generated key", async (t) 
   assert.equal(first.proxyKey, second.proxyKey);
   assert.equal(await readProxyKey(paths.proxyConfig), first.proxyKey);
   const config = await readFile(paths.proxyConfig, "utf8");
-  assert.match(config, /name: "gpt-5\.6-sol"\n      alias: "claude-sonnet-5"/);
-  assert.match(config, /name: "gpt-5\.6-terra"\n      alias: "claude-haiku-4-5"/);
+  assert.match(config, /name: "gpt-6-astra"\n      alias: "claude-sonnet-5"/);
+  assert.match(config, /name: "gpt-5\.6-sol"\n      alias: "claude-haiku-4-5"/);
   assert.match(config, /user-agent: "claude-cli\/2\.1\.257 \(external, cli\)"/);
   assert.doesNotMatch(config, /alias: "claude-opus-5"/);
   assert.doesNotMatch(config, /alias: "claude-fable-5-1"/);

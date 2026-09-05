@@ -47,7 +47,7 @@ test("update checks compare actual binary and config without modifying them", as
 
   assert.equal((await checkUpdate(paths, manifest, { target })).action, "none");
   const nextManifest = structuredClone(manifest);
-  nextManifest.models.sol.aliases.push("claude-sonnet-future");
+  nextManifest.models.astra.aliases.push("claude-sonnet-future");
   const configUpdate = await checkUpdate(paths, nextManifest, { target });
   assert.equal(configUpdate.binaryMatchesChannel, true);
   assert.equal(configUpdate.configMatchesChannel, false);

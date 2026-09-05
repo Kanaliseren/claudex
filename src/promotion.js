@@ -45,7 +45,7 @@ export function validateUpstreamModels(manifest, catalog) {
   const native = new Set((catalog.claude ?? []).map((model) => model.id));
   const codex = new Set(Object.entries(catalog).filter(([name]) => name.startsWith("codex-")).flatMap(([, models]) => models.map((model) => model.id)));
   for (const [name, model] of Object.entries(manifest.models)) {
-    const available = name === "sol" || name === "terra" ? codex : native;
+    const available = name === "astra" || name === "sol" ? codex : native;
     if (!available.has(model.upstream)) throw new Error(`upstream catalog is missing configured model: ${name} (${model.upstream})`);
   }
 }

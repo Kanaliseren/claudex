@@ -15,7 +15,7 @@ export function validateManifest(manifest) {
   for (const field of ["version", "commit", "repository", "tag", "assets"]) {
     if (manifest.proxy?.[field] === undefined) throw new Error(`channel manifest missing proxy.${field}`);
   }
-  for (const model of ["sol", "terra", "opus", "fable"]) {
+  for (const model of ["astra", "sol", "opus", "fable"]) {
     if (!manifest.models?.[model]?.upstream || !manifest.models?.[model]?.alias) {
       throw new Error(`channel manifest missing models.${model}`);
     }

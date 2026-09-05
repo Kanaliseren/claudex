@@ -33,7 +33,7 @@ test("a release missing a configured native or Codex model cannot be promoted", 
   const { validateUpstreamModels } = await import("../src/promotion.js");
   const { fixtureManifest } = await import("../test-support/helpers.js");
   const manifest = fixtureManifest();
-  const catalog = { claude: [{ id: "claude-opus-5" }, { id: "claude-fable-5-1" }], "codex-pro": [{ id: "gpt-5.6-sol" }, { id: "gpt-5.6-terra" }] };
+  const catalog = { claude: [{ id: "claude-opus-5" }, { id: "claude-fable-5-1" }], "codex-pro": [{ id: "gpt-6-astra" }, { id: "gpt-5.6-sol" }] };
   assert.doesNotThrow(() => validateUpstreamModels(manifest, catalog));
   catalog.claude.pop();
   assert.throws(() => validateUpstreamModels(manifest, catalog), /missing configured model: fable/);

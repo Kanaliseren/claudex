@@ -22,9 +22,9 @@ export async function claudeEnvironment(paths, manifest, { enableToolSearch = tr
   return {
     ANTHROPIC_BASE_URL: `http://${summary.host}:${summary.port}`,
     ANTHROPIC_AUTH_TOKEN: proxyKey,
-    ANTHROPIC_MODEL: manifest.models.sol.alias,
-    ANTHROPIC_DEFAULT_SONNET_MODEL: manifest.models.sol.alias,
-    ANTHROPIC_DEFAULT_HAIKU_MODEL: manifest.models.terra.alias,
+    ANTHROPIC_MODEL: manifest.models.astra.alias,
+    ANTHROPIC_DEFAULT_SONNET_MODEL: manifest.models.astra.alias,
+    ANTHROPIC_DEFAULT_HAIKU_MODEL: manifest.models.sol.alias,
     ...(enableToolSearch ? { ENABLE_TOOL_SEARCH: "true" } : {}),
     API_TIMEOUT_MS: "3000000",
   };
@@ -52,8 +52,8 @@ export async function runClaude(paths, manifest, args, { runCommand = run } = {}
 }
 
 function renderUnixWrapper(paths, manifest, baseUrl) {
+  const astra = shellQuote(manifest.models.astra.alias);
   const sol = shellQuote(manifest.models.sol.alias);
-  const terra = shellQuote(manifest.models.terra.alias);
   return `#!/bin/sh
 set -eu
 claude_binary=\${CLAUDE_CODE_BINARY:-claude}
@@ -72,9 +72,9 @@ case "$claude_help" in *--append-system-prompt*) set -- --append-system-prompt $
 case "$claude_help" in *--exclude-dynamic-system-prompt-sections*) set -- --exclude-dynamic-system-prompt-sections "$@";; esac
 export ANTHROPIC_BASE_URL=${shellQuote(baseUrl)}
 export ANTHROPIC_AUTH_TOKEN="$proxy_key"
-export ANTHROPIC_MODEL=${sol}
-export ANTHROPIC_DEFAULT_SONNET_MODEL=${sol}
-export ANTHROPIC_DEFAULT_HAIKU_MODEL=${terra}
+export ANTHROPIC_MODEL=${astra}
+export ANTHROPIC_DEFAULT_SONNET_MODEL=${astra}
+export ANTHROPIC_DEFAULT_HAIKU_MODEL=${sol}
 export ENABLE_TOOL_SEARCH=true
 export API_TIMEOUT_MS=3000000
 exec "$claude_binary" "$@"
@@ -91,9 +91,9 @@ for /f "tokens=2" %%K in ('findstr /r /c:"^  - " "${paths.proxyConfig}"') do if 
 if not defined proxy_key (echo No proxy key found in ${paths.proxyConfig} 1>&2 & exit /b 1)\r
 set "ANTHROPIC_BASE_URL=${baseUrl}"\r
 set "ANTHROPIC_AUTH_TOKEN=!proxy_key!"\r
-set "ANTHROPIC_MODEL=${manifest.models.sol.alias}"\r
-set "ANTHROPIC_DEFAULT_SONNET_MODEL=${manifest.models.sol.alias}"\r
-set "ANTHROPIC_DEFAULT_HAIKU_MODEL=${manifest.models.terra.alias}"\r
+set "ANTHROPIC_MODEL=${manifest.models.astra.alias}"\r
+set "ANTHROPIC_DEFAULT_SONNET_MODEL=${manifest.models.astra.alias}"\r
+set "ANTHROPIC_DEFAULT_HAIKU_MODEL=${manifest.models.sol.alias}"\r
 set "ENABLE_TOOL_SEARCH=true"\r
 set "API_TIMEOUT_MS=3000000"\r
 set "dynamic_args="\r

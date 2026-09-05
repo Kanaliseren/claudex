@@ -12,10 +12,10 @@ export async function writeProxyConfig(paths, manifest, { port = 8317 } = {}) {
 }
 
 export function renderProxyConfig({ paths, manifest, port, proxyKey }) {
+  const astra = manifest.models.astra;
   const sol = manifest.models.sol;
-  const terra = manifest.models.terra;
   const claudeCodeVersion = manifest.compatibility.claudeCode.tested.at(-1);
-  const models = [sol, terra];
+  const models = [astra, sol];
   const aliases = models.flatMap(modelAliases);
   return `# Managed by Claudex. Edit through the package, not in place.
 host: "127.0.0.1"

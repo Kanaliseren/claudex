@@ -47,3 +47,16 @@ test("failed initial setup can stop its package-owned service", async (t) => {
   assert.deepEqual(calls[0].args, ["--user", "stop", "claudex.service"]);
   assert.equal(calls[0].options.allowFailure, true);
 });
+
+test("proxy upgrades restart an existing dependent quota hub without rewriting it", async (t) => {
+  const root = await temporaryRoot(t);
+  const paths = resolvePaths({ env: { CLAUDEX_HOME: root }, home: root, platform: "linux" });
+  const { atomicWrite } = await import("../src/util.js");
+  const { restartService } = await import("../src/service.js");
+  await atomicWrite(paths.systemdUnit, "proxy");
+  await atomicWrite(paths.hubSystemdUnit, "existing hub");
+  const calls = [];
+  await restartService(paths, { platform: "linux", runCommand: async (command, args) => { calls.push([command, ...args]); return { code: 0 }; } });
+  assert.deepEqual(calls, [["systemctl", "--user", "restart", "claudex.service", "claudex-hub.service"]]);
+  assert.equal(await readFile(paths.hubSystemdUnit, "utf8"), "existing hub");
+});

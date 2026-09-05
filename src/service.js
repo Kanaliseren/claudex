@@ -57,7 +57,10 @@ async function installLaunchd(paths, runCommand) {
 
 export async function restartService(paths, { platform = process.platform, runCommand = run } = {}) {
   if (platform === "linux" && (await exists(paths.systemdUnit))) {
-    await runCommand("systemctl", ["--user", "restart", paths.serviceName]);
+    // Existing quota hubs depend on the proxy; restart them with it without rewriting their setup.
+    const services = [paths.serviceName];
+    if (await exists(paths.hubSystemdUnit)) services.push(paths.hubServiceName);
+    await runCommand("systemctl", ["--user", "restart", ...services]);
     return true;
   }
   if (platform === "darwin" && (await exists(paths.launchdPlist))) {

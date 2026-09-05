@@ -6,12 +6,16 @@ import { spawn } from "node:child_process";
 import { renderProxyConfig } from "./config.js";
 import { atomicWrite, ensureDir, randomSecret, sleep } from "./util.js";
 
-export async function runIsolatedCanary(binary, paths, manifest, { fetchImpl = fetch } = {}) {
+export async function runIsolatedCanary(binary, paths, manifest, { fetchImpl = fetch, requireOAuth = false } = {}) {
   const root = await mkdtemp(join(tmpdir(), "claudex-canary-"));
   const authDir = join(root, "auth");
   const configPath = join(root, "config.yaml");
   await ensureDir(authDir);
   const hasOAuth = await copyAccessOnlyCredential(paths.authDir, authDir);
+  if (requireOAuth && !hasOAuth) {
+    await rm(root, { recursive: true, force: true });
+    throw new Error("a local Codex OAuth credential is required to canary an upstream update; run claudex login codex");
+  }
   const port = await availablePort();
   const proxyKey = randomSecret("canary");
   const canaryPaths = { ...paths, authDir };
@@ -60,7 +64,7 @@ async function copyAccessOnlyCredential(sourceDir, destinationDir) {
     } catch {
       continue;
     }
-    if (credential.type !== "codex" && !entry.name.toLowerCase().includes("codex")) continue;
+    if (credential.type !== "codex" || credential.disabled) continue;
     delete credential.refresh_token;
     if (credential.tokens && typeof credential.tokens === "object") delete credential.tokens.refresh_token;
     if (!credential.access_token && !credential.tokens?.access_token) continue;
@@ -112,8 +116,7 @@ async function probeOAuthMessage(port, proxyKey, model, fetchImpl) {
     signal: AbortSignal.timeout(90_000),
   });
   if (!response.ok) {
-    const detail = (await response.text()).replaceAll(/[A-Za-z0-9_-]{24,}/g, "[redacted]").slice(0, 300);
-    throw new Error(`OAuth canary returned HTTP ${response.status}: ${detail}`);
+    throw new Error(`Codex OAuth canary returned HTTP ${response.status}`);
   }
   const body = await response.json();
   if (!Array.isArray(body.content) || body.content.length === 0) {

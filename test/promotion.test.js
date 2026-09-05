@@ -1,34 +1,40 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { promoteProxy } from "../src/promotion.js";
-import { fixtureManifest } from "../test-support/helpers.js";
+import { upstreamAssets, upstreamRepository } from "../src/promotion.js";
 
-test("proxy promotion replaces every pinned asset from release metadata", () => {
-  const tag = "v7.2.147-claudex.1";
-  const file = (platform) => `cli-proxy-api-${platform}.gz`;
-  const asset = (platform) => ({
-    platform,
-    file: file(platform),
-    sha256: "a".repeat(64),
-    archiveSha256: "b".repeat(64),
-    archiveBytes: 123,
+function releaseFixture() {
+  const suffixes = ["linux_amd64.tar.gz", "linux_aarch64.tar.gz", "darwin_amd64.tar.gz", "darwin_aarch64.tar.gz", "windows_amd64.zip"];
+  const assets = suffixes.map((suffix) => {
+    const name = `CLIProxyAPI_7.2.151_${suffix}`;
+    return { name, size: 123, browser_download_url: `https://github.com/${upstreamRepository}/releases/download/v7.2.151/${name}` };
   });
-  const platforms = ["linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64", "win32-x64"];
-  const metadata = {
-    schemaVersion: 1,
-    version: tag,
-    commit: "c".repeat(40),
-    assets: Object.fromEntries(platforms.map((platform) => [platform, asset(platform)])),
-  };
+  return { release: { tag_name: "v7.2.151", assets }, checksums: assets.map(({ name }) => `${"a".repeat(64)}  ${name}`).join("\n") };
+}
 
-  const promoted = promoteProxy(fixtureManifest(), metadata, {
-    tag,
-    claudeVersion: "2.1.258",
-    repository: "Kanaliseren/CLIProxyAPI",
-  });
+test("official releases map all supported platforms with archive checksums", () => {
+  const { release, checksums } = releaseFixture();
+  const assets = upstreamAssets(release, checksums);
+  assert.equal(Object.keys(assets).length, 5);
+  assert.equal(assets["linux-arm64"].compression, "tar.gz");
+  assert.equal(assets["win32-x64"].compression, "zip");
+  assert.equal(assets["win32-x64"].executable, "cli-proxy-api.exe");
+  assert.equal(assets["linux-x64"].archiveSha256, "a".repeat(64));
+});
 
-  assert.equal(promoted.proxy.version, tag);
-  assert.equal(promoted.proxy.upstreamVersion, "v7.2.147");
-  assert.deepEqual(promoted.compatibility.claudeCode.tested, ["2.1.257", "2.1.258"]);
-  assert.equal(promoted.proxy.assets["linux-x64"].url, `https://github.com/Kanaliseren/CLIProxyAPI/releases/download/${tag}/${file("linux-x64")}`);
+test("promotion refuses missing checksums, substituted URLs, and prereleases", () => {
+  const { release, checksums } = releaseFixture();
+  assert.throws(() => upstreamAssets(release, checksums.split("\n").slice(1).join("\n")), /missing verified/);
+  assert.throws(() => upstreamAssets({ ...release, prerelease: true }, checksums), /stable upstream/);
+  release.assets[0].browser_download_url = "https://example.invalid/substitute";
+  assert.throws(() => upstreamAssets(release, checksums), /missing verified/);
+});
+
+test("a release missing a configured native or Codex model cannot be promoted", async () => {
+  const { validateUpstreamModels } = await import("../src/promotion.js");
+  const { fixtureManifest } = await import("../test-support/helpers.js");
+  const manifest = fixtureManifest();
+  const catalog = { claude: [{ id: "claude-opus-5" }, { id: "claude-fable-5-1" }], "codex-pro": [{ id: "gpt-5.6-sol" }, { id: "gpt-5.6-terra" }] };
+  assert.doesNotThrow(() => validateUpstreamModels(manifest, catalog));
+  catalog.claude.pop();
+  assert.throws(() => validateUpstreamModels(manifest, catalog), /missing configured model: fable/);
 });

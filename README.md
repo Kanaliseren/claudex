@@ -31,7 +31,7 @@ claudex login
 claudex integrate all
 ```
 
-`setup` installs a checksum-pinned, compatibility-tested CLIProxyAPI build,
+`setup` installs a checksum-pinned official CLIProxyAPI build,
 generates a loopback-only configuration, installs a user service where the
 platform supports one, and creates `~/.local/bin/claude-cliproxy`.
 
@@ -45,11 +45,13 @@ the generated OAuth files between machines.
 claudex setup [--binary PATH] [--port PORT] [--no-service]
 claudex login [codex|claude] [--device]
 claudex doctor [--json] [--live]
-claudex update [--binary PATH]
-claudex upgrade [--binary PATH]
+claudex update [--upstream | --binary PATH] [--check [--json]]
+claudex upgrade [--upstream | --binary PATH] [--check [--json]]
 claudex rollback
 claudex integrate <paseo|t3|all> [--path PATH]
 claudex claude [CLAUDE OPTIONS...]
+claudex run <sol|terra|opus|fable> [--] [CLAUDE OPTIONS...]
+claudex models [--json]
 claudex status [--json]
 ```
 
@@ -58,7 +60,60 @@ directory. `CLIPROXY_OAUTH_HOME` remains available as a compatibility alias.
 Existing installations continue using their current paths and service IDs, so
 renaming Claudex does not invalidate local OAuth credentials.
 
+## Choose a model for one session
+
+```bash
+claudex models
+claudex run sol
+claudex run opus
+claudex run terra -- --print "Explain this function" --output-format json
+```
+
+`models` lists the aliases and upstream models in the bundled tested channel;
+it does not contact a provider or verify login. `run` selects that model through
+Claude Code's `--model` flag for one session and forwards the remaining arguments
+unchanged. An explicit later `--model` flag can override the named choice. It
+preserves Claude Code's exit status and leaves installed routing and integrations
+unchanged. Sol and Terra use Codex OAuth; Opus and Fable use native Claude OAuth.
+`claudex claude` continues to launch with the existing defaults.
+
 ## Upgrade policy
+
+To follow official CLIProxyAPI releases without maintaining a fork or editing
+release pins, run:
+
+```bash
+claudex update --upstream --check
+claudex update --upstream
+```
+
+`--upstream` downloads the latest stable release directly from
+`router-for-me/CLIProxyAPI`, verifies its published archive checksum, records the
+extracted executable checksum, and requires an isolated local Codex OAuth canary
+before activating a different binary. An exhausted Claude subscription is not
+used by this canary. Failed candidates leave the current proxy active. A newer
+installed proxy cannot be silently downgraded by an older bundled channel;
+`rollback` is the explicit way back. This path follows upstream compatibility
+work, but does not claim every new release has been tested with native Claude.
+
+Archive extraction requires `tar` (included with current Windows releases).
+Preparing all platforms' release pins on Linux/macOS also requires `unzip`.
+Only the selected executable is extracted; upstream sample configs never replace
+your installation's configuration.
+
+Check the installed proxy binary and configuration against the latest Claudex
+package's tested channel before installing:
+
+```bash
+npx --yes github:Kanaliseren/claudex update --check
+```
+
+`update --check --json` reports whether setup or an update is needed without
+writing installation files, running Claude Code, starting services, or accessing
+OAuth credentials. It detects configuration changes even when the proxy binary
+has not changed. The check compares against the manifest bundled with the
+invoked package; it does not check newer upstream proxy builds or Claude Code
+versions. A successful check exits zero regardless of the recommended action.
 
 Run the latest installer against an existing installation with:
 
@@ -72,8 +127,7 @@ npx --yes github:Kanaliseren/claudex update
 then stage the newest compatibility-tested CLIProxyAPI build bundled with Claudex.
 `integrate t3` also registers native manifest models that T3 has not bundled yet.
 
-This project deliberately does not activate an arbitrary newest upstream build.
-Each package release pins exact binaries and checksums. `upgrade` stages the
+Without `--upstream`, each package release pins exact binaries and checksums. `upgrade` stages the
 candidate, checks required capabilities, runs an isolated OAuth canary when a
 local credential is available, then atomically activates it. Failed candidates
 leave the current release running.
@@ -101,8 +155,19 @@ Code releases are used immediately and retain the Tool Search override required
 for a custom proxy URL; `doctor` warns when a release has not yet been added to
 the validation matrix.
 
-The current stable channel is based on CLIProxyAPI `v7.2.147` and has been
-tested end-to-end with Claude Code `2.1.257`, including Fable 5.1.
+The current channel uses official CLIProxyAPI `v7.2.151`. Its isolated Codex OAuth
+canary passed on this migration. Native Claude model names and gateway settings
+were checked against official documentation and upstream source; native Claude
+inference was not tested because the local subscription was exhausted. Prior
+Claude Code validation versions remain recorded in the manifest.
+
+The local quota-hub script and configuration, when already installed, remain
+independent of the package. Proxy upgrades restart an existing systemd quota hub
+with its proxy and preserve its files and T3 settings.
 
 Maintainers: follow [`docs/updating.md`](docs/updating.md) when promoting a proxy
 or Claude Code release.
+
+This project is separate from StringKe's similarly named Claudex. See the
+[source comparison](docs/claudex-comparison.md) for the replacement assessment
+and the CLI conveniences adapted here.

@@ -42,6 +42,9 @@ export async function upgrade(paths, manifest, options = {}) {
     await prepareDirectories(paths);
     const oldState = await loadState(paths);
     if (!oldState.activeRelease) throw new Error("run setup before upgrade");
+    if (olderRelease(manifest.proxy.version, oldState.activeRelease.version)) {
+      throw new Error("refusing to replace a newer installed proxy with an older channel; use update --upstream or rollback explicitly");
+    }
     const oldConfig = await readFile(paths.proxyConfig, "utf8");
     const { port } = await readProxySummary(paths.proxyConfig);
     const release = await stageRelease(paths, manifest, options);
@@ -75,6 +78,17 @@ export async function upgrade(paths, manifest, options = {}) {
     }
     return { changed: true, configChanged: true, release, canary };
   });
+}
+
+function olderRelease(candidate, installed) {
+  const versionParts = (version) => /^v(\d+)\.(\d+)\.(\d+)(?:-|$)/.exec(version)?.slice(1).map(Number);
+  const next = versionParts(candidate);
+  const current = versionParts(installed);
+  if (!next || !current) return false;
+  for (let index = 0; index < next.length; index += 1) {
+    if (next[index] !== current[index]) return next[index] < current[index];
+  }
+  return false;
 }
 
 export async function rollback(paths, options = {}) {

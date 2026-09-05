@@ -2,46 +2,51 @@
   "schemaVersion": 1,
   "channel": "stable",
   "proxy": {
-    "version": "v7.2.147-claudex.1",
-    "upstreamVersion": "v7.2.147",
-    "commit": "2af596f087d63d1bd144349744e1f812ce40d0d5",
-    "repository": "Kanaliseren/CLIProxyAPI",
-    "tag": "v7.2.147-claudex.1",
+    "version": "v7.2.151",
+    "upstreamVersion": "v7.2.151",
+    "repository": "router-for-me/CLIProxyAPI",
+    "commit": "5208aec703b5ce7e3445f6e9d91cc13b3e78003a",
+    "tag": "v7.2.151",
     "assets": {
       "linux-x64": {
-        "url": "https://github.com/Kanaliseren/CLIProxyAPI/releases/download/v7.2.147-claudex.1/cli-proxy-api-linux-x64.gz",
-        "sha256": "87b2980f13ea3e0f4aa45f2283d0fd67dd416f831b1f3fbad09353646a1e9d94",
-        "compression": "gzip",
-        "archiveSha256": "050346366daf5849cd7b1127afd23a3986932ae5f01f03deaacae950fa546a9b",
-        "archiveBytes": 21054661
+        "url": "https://github.com/router-for-me/CLIProxyAPI/releases/download/v7.2.151/CLIProxyAPI_7.2.151_linux_amd64.tar.gz",
+        "compression": "tar.gz",
+        "executable": "cli-proxy-api",
+        "archiveSha256": "194f38ad40bba5cb07cdc1521b0853be0f9868c53ade40c677f32b21005c33f9",
+        "archiveBytes": 21472192,
+        "sha256": "ed5926d02829b4d8fddc4b1fe2dd7e4e38a2b2c47cde9def03c4c59f804f3bb2"
       },
       "linux-arm64": {
-        "url": "https://github.com/Kanaliseren/CLIProxyAPI/releases/download/v7.2.147-claudex.1/cli-proxy-api-linux-arm64.gz",
-        "sha256": "6cfbc88bab2586fd8d1c4c340bfbe626a5a568381d7c5f83fc520eac125a66ef",
-        "compression": "gzip",
-        "archiveSha256": "048a427deb256f264b68284df39eba4e6d46a6d46954c5c65613ddb5c92419a2",
-        "archiveBytes": 19035885
+        "url": "https://github.com/router-for-me/CLIProxyAPI/releases/download/v7.2.151/CLIProxyAPI_7.2.151_linux_aarch64.tar.gz",
+        "compression": "tar.gz",
+        "executable": "cli-proxy-api",
+        "archiveSha256": "14c03fcc69923c012bd0dace189790cf1ad1586f17bb64d8c09784a0a23ad587",
+        "archiveBytes": 19375363,
+        "sha256": "3dae2f5efdbe0b29010a38b41ef59a2e4056258d10a839509d184bc544d88abe"
       },
       "darwin-x64": {
-        "url": "https://github.com/Kanaliseren/CLIProxyAPI/releases/download/v7.2.147-claudex.1/cli-proxy-api-darwin-x64.gz",
-        "sha256": "e47f3ab7b83b08a4376fc1cf01b260fe43f818a4f560d4dead25e6d3acec3221",
-        "compression": "gzip",
-        "archiveSha256": "1fba0ebcb4e52a9e46c07cc97f168ce9711a5b3c178b885fc1f3457444c2cfbb",
-        "archiveBytes": 21797905
+        "url": "https://github.com/router-for-me/CLIProxyAPI/releases/download/v7.2.151/CLIProxyAPI_7.2.151_darwin_amd64.tar.gz",
+        "compression": "tar.gz",
+        "executable": "cli-proxy-api",
+        "archiveSha256": "05d9344b0a39b81ef1d4217b1136964dadfba4a485d18a70564562fef4f6bf98",
+        "archiveBytes": 21430434,
+        "sha256": "fb73bd27370de31fd7932eb77b71cff3101741574bed372da6898a3b043e0163"
       },
       "darwin-arm64": {
-        "url": "https://github.com/Kanaliseren/CLIProxyAPI/releases/download/v7.2.147-claudex.1/cli-proxy-api-darwin-arm64.gz",
-        "sha256": "5d4001fabeaed47f2543f16c7e12b4dac8fbe7915044350bbc72413bb8931d81",
-        "compression": "gzip",
-        "archiveSha256": "80034462b31ffe0a7c07bc64454364680f1738a26faadba04f5b8971fa29057e",
-        "archiveBytes": 20256484
+        "url": "https://github.com/router-for-me/CLIProxyAPI/releases/download/v7.2.151/CLIProxyAPI_7.2.151_darwin_aarch64.tar.gz",
+        "compression": "tar.gz",
+        "executable": "cli-proxy-api",
+        "archiveSha256": "9115b9691ceff071735ec1365c2885dca5d4084105de09877f5afdb675f1f815",
+        "archiveBytes": 19810773,
+        "sha256": "b5165a29322b91fdb0def254bb688933660110de2d647f3ceab4119ce59caf58"
       },
       "win32-x64": {
-        "url": "https://github.com/Kanaliseren/CLIProxyAPI/releases/download/v7.2.147-claudex.1/cli-proxy-api-win32-x64.gz",
-        "sha256": "f709c79073bbfe96c59b8ce3dfdfa98a4c1a7843ea8b7225176bbea5cb633ed5",
-        "compression": "gzip",
-        "archiveSha256": "28fb54c3172832ffc629a61e4b48c3f0cec6b0128746f5859b28d460b035778d",
-        "archiveBytes": 21489795
+        "url": "https://github.com/router-for-me/CLIProxyAPI/releases/download/v7.2.151/CLIProxyAPI_7.2.151_windows_amd64.zip",
+        "compression": "zip",
+        "executable": "cli-proxy-api.exe",
+        "archiveSha256": "976474ec0180701c31fb07a9caa9af9b5cf126dbceecedd883ae1cdc0a8024f0",
+        "archiveBytes": 21735802,
+        "sha256": "c95de74869557a16e2c10bb2915489ab75cadabe724ce3c15fdb96a42b58f5ca"
       }
     }
   },

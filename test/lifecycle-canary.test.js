@@ -187,3 +187,22 @@ const server = createServer((request, response) => {
 server.listen(port, "127.0.0.1");
 process.on("SIGTERM", () => server.close(() => process.exit(0)));
 `;
+
+test("upstream canary requires Codex credentials and never substitutes Claude credentials", async (t) => {
+  const root = await temporaryRoot(t);
+  const paths = resolvePaths({ env: { CLAUDEX_HOME: root }, home: root });
+  await mkdir(paths.authDir, { recursive: true });
+  await writeFile(join(paths.authDir, "codex-misnamed.json"), JSON.stringify({ type: "claude", access_token: "test-native-token" }));
+  await assert.rejects(runIsolatedCanary("must-not-start", paths, fixtureManifest(), { requireOAuth: true }), /Codex OAuth credential is required/);
+});
+
+test("an older bundled channel cannot silently downgrade an upstream installation", async (t) => {
+  const root = await temporaryRoot(t);
+  const paths = resolvePaths({ env: { CLAUDEX_HOME: root }, home: root });
+  const { saveState } = await import("../src/state.js");
+  await saveState(paths, { activeRelease: { version: "v7.2.151", sha256: "a".repeat(64) } });
+  const manifest = fixtureManifest();
+  manifest.proxy.version = "v7.2.147-claudex.1";
+  await assert.rejects(upgrade(paths, manifest), /refusing to replace a newer installed proxy/);
+  assert.equal((await loadState(paths)).activeRelease.version, "v7.2.151");
+});

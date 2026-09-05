@@ -57,6 +57,8 @@ export function resolvePaths({ env = process.env, platform = process.platform, h
     serviceName: `${namespace}.service`,
     launchdLabel: `com.kanaliseren.${namespace}`,
     systemdUnit: join(userHome, ".config", "systemd", "user", `${namespace}.service`),
+    hubServiceName: `${namespace}-hub.service`,
+    hubSystemdUnit: join(userHome, ".config", "systemd", "user", `${namespace}-hub.service`),
     launchdPlist: join(userHome, "Library", "LaunchAgents", `com.kanaliseren.${namespace}.plist`),
   };
 }

@@ -38,13 +38,16 @@ export function assetForPlatform(manifest, target) {
   if (!asset?.url || !/^[a-f0-9]{64}$/.test(asset.sha256 ?? "")) {
     throw new Error(`stable channel has no verified asset for ${key}`);
   }
-  if (asset.compression !== undefined && asset.compression !== "gzip") {
+  if (asset.compression !== undefined && !["gzip", "tar.gz", "zip"].includes(asset.compression)) {
     throw new Error(`stable channel has unsupported compression for ${key}`);
   }
-  if (asset.compression === "gzip") {
-    if (!/^[a-f0-9]{64}$/.test(asset.archiveSha256 ?? "") || !Number.isSafeInteger(asset.archiveBytes)) {
+  if (asset.compression !== undefined) {
+    if (!/^[a-f0-9]{64}$/.test(asset.archiveSha256 ?? "") || !Number.isSafeInteger(asset.archiveBytes) || asset.archiveBytes <= 0) {
       throw new Error(`stable channel has invalid archive metadata for ${key}`);
     }
+  }
+  if (["tar.gz", "zip"].includes(asset.compression) && asset.executable !== (key.startsWith("win32-") ? "cli-proxy-api.exe" : "cli-proxy-api")) {
+    throw new Error(`stable channel has invalid executable for ${key}`);
   }
   return { key, ...asset };
 }

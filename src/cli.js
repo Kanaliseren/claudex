@@ -4,6 +4,8 @@ import { diagnose, statusSummary } from "./doctor.js";
 import { integrate } from "./integrations.js";
 import { login, rollback, setup, updateClaudeCode, upgrade } from "./lifecycle.js";
 import { runClaude } from "./wrapper.js";
+import { checkUpdate } from "./update-check.js";
+import { prepareUpstreamManifest } from "./promotion.js";
 
 export async function main(argv = process.argv.slice(2), io = console) {
   const [command = "help", ...tail] = argv;
@@ -11,15 +13,48 @@ export async function main(argv = process.argv.slice(2), io = console) {
     io.log(helpText);
     return 0;
   }
-  if (command === "claude") {
+  if (command === "claude" || command === "run") {
     const manifest = await loadManifest();
     const paths = resolvePaths();
-    const args = tail[0] === "--" ? tail.slice(1) : tail;
+    let args = tail;
+    let model;
+    if (command === "run") {
+      const [name, ...rest] = tail;
+      if (!Object.hasOwn(manifest.models, name)) {
+        throw new Error(`usage: claudex run <${Object.keys(manifest.models).join("|")}> [--] [CLAUDE OPTIONS...]`);
+      }
+      model = manifest.models[name].alias;
+      args = rest;
+    }
+    args = args[0] === "--" ? args.slice(1) : args;
+    if (model) args = ["--model", model, ...args];
     return runClaude(paths, manifest, args);
   }
   const parsed = parseArguments(tail);
+  if (parsed.options.check && command !== "update" && command !== "upgrade") {
+    throw new Error("--check is only supported by update and upgrade");
+  }
+  if (parsed.options.upstream && command !== "update" && command !== "upgrade") {
+    throw new Error("--upstream is only supported by update and upgrade");
+  }
   const manifest = await loadManifest(parsed.options.manifest);
   const paths = resolvePaths();
+
+  if (command === "models") {
+    rejectPositionals(parsed, command);
+    const models = Object.entries(manifest.models).map(([name, model]) => ({
+      name,
+      alias: model.alias,
+      upstream: model.upstream,
+      displayName: model.displayName ?? name,
+    }));
+    if (parsed.options.json) io.log(JSON.stringify(models, null, 2));
+    else {
+      io.log("Models in the bundled tested channel (availability requires local provider login):");
+      for (const model of models) io.log(`${model.name.padEnd(7)} ${model.alias} -> ${model.upstream}`);
+    }
+    return 0;
+  }
 
   if (command === "setup") {
     rejectPositionals(parsed, command);
@@ -69,9 +104,29 @@ export async function main(argv = process.argv.slice(2), io = console) {
 
   if (command === "update" || command === "upgrade") {
     rejectPositionals(parsed, command);
+    if (parsed.options.upstream && (parsed.options.binary || parsed.options.manifest)) {
+      throw new Error("--upstream cannot be combined with --binary or --manifest");
+    }
+    if (parsed.options.json && !parsed.options.check) throw new Error("--json requires --check for update and upgrade");
+    const candidate = parsed.options.upstream
+      ? await prepareUpstreamManifest(manifest, "latest", { currentPlatformOnly: true })
+      : manifest;
+    if (parsed.options.check) {
+      if (parsed.options.binary) throw new Error("--binary cannot be combined with --check; checks use the bundled tested channel");
+      const report = await checkUpdate(paths, candidate);
+      if (parsed.options.json) io.log(JSON.stringify(report, null, 2));
+      else {
+        io.log(`Installed proxy: ${report.installed ? report.installedVersion ?? "unknown version" : "not installed"}`);
+        io.log(`${parsed.options.upstream ? "Official upstream release" : "Bundled tested channel"}: ${report.channelVersion}`);
+        io.log(`Binary: ${report.binaryMatchesChannel ? "matches" : "missing or differs"}; config: ${report.configMatchesChannel ? "matches" : "missing or differs"}.`);
+        io.log(report.action === "none" ? "Proxy binary and config match this channel." : `Next: claudex ${report.action}${parsed.options.upstream && report.action === "update" ? " --upstream" : ""}`);
+        io.log("Read-only check; Claude Code updates and newer Claudex packages are not checked. No provider canary has run.");
+      }
+      return 0;
+    }
     const claude = await updateClaudeCode();
     io.log(`Claude Code is current (${claude.version}).`);
-    const result = await upgrade(paths, manifest, { binary: parsed.options.binary });
+    const result = await upgrade(paths, candidate, { binary: parsed.options.binary, requireOAuth: Boolean(parsed.options.upstream) });
     if (!result.changed) io.log(`Already on ${result.release.version} (${result.release.sha256.slice(0, 12)}).`);
     else {
       io.log(`Upgraded to ${result.release.version} (${result.release.sha256.slice(0, 12)}).`);
@@ -105,11 +160,13 @@ Usage:
   claudex setup [--binary PATH] [--port PORT] [--no-service]
   claudex login [codex|claude] [--device]
   claudex doctor [--json] [--live]
-  claudex update [--binary PATH]
-  claudex upgrade [--binary PATH]
+  claudex update [--upstream | --binary PATH] [--check [--json]]
+  claudex upgrade [--upstream | --binary PATH] [--check [--json]]
   claudex rollback
   claudex integrate <paseo|t3|all> [--path PATH]
   claudex claude [--] [CLAUDE OPTIONS...]
+  claudex run <sol|terra|opus|fable> [--] [CLAUDE OPTIONS...]
+  claudex models [--json]
   claudex status [--json]
 
 Environment:
@@ -126,6 +183,8 @@ function parseArguments(args) {
     ["--device", "device"],
     ["--json", "json"],
     ["--live", "live"],
+    ["--check", "check"],
+    ["--upstream", "upstream"],
   ]);
   const valued = new Map([
     ["--binary", "binary"],

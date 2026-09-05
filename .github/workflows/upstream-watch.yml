@@ -40,7 +40,7 @@ jobs:
               repo: context.repo.repo,
               title,
               labels: ["compatibility"],
-              body: "An upstream release differs from the bundled tested matrix. Rebase patches, run unit/race/build gates, capture Claude protocol capabilities, and complete an isolated real-OAuth canary before updating `channel/stable.json`. Do not auto-promote.",
+              body: "An upstream release differs from the bundled matrix. Local users can run `claudex update --upstream` to verify official archives and canary with local Codex OAuth; no fork build is needed. To refresh the bundled channel, run `npm run promote:proxy -- latest`, package checks, asset verification, and a Codex canary before committing `channel/stable.json`. Record native Claude checks separately; do not mark unavailable subscriptions as tested.",
             });
         env:
           SUMMARY: ${{ steps.compare.outputs.summary }}

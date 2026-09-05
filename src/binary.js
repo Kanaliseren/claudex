@@ -1,8 +1,6 @@
-import { createReadStream, createWriteStream } from "node:fs";
 import { chmod, rename, rm, stat } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { createGunzip } from "node:zlib";
-import { pipeline } from "node:stream/promises";
+import { extractExecutable } from "./archive.js";
 import { assetForPlatform } from "./manifest.js";
 import {
   atomicCopy,
@@ -73,8 +71,7 @@ async function downloadRelease(asset, destination) {
     await download(asset.url, destination);
     return;
   }
-  if (asset.compression !== "gzip") throw new Error(`unsupported release compression: ${asset.compression}`);
-  const archive = `${destination}.${process.pid}.download.gz`;
+  const archive = `${destination}.${process.pid}.download.${asset.compression}`;
   const extracted = `${destination}.${process.pid}.extracted`;
   try {
     await download(asset.url, archive);
@@ -86,7 +83,8 @@ async function downloadRelease(asset, destination) {
     if (archiveSha !== asset.archiveSha256) {
       throw new Error(`release archive checksum mismatch: expected ${asset.archiveSha256}, got ${archiveSha}`);
     }
-    await pipeline(createReadStream(archive), createGunzip(), createWriteStream(extracted, { mode: 0o755, flags: "wx" }));
+    await extractExecutable(archive, extracted, asset);
+    if ((await sha256File(extracted)) !== asset.sha256) throw new Error("extracted executable checksum mismatch");
     if (process.platform !== "win32") await chmod(extracted, 0o755);
     await rename(extracted, destination);
   } finally {

@@ -93,3 +93,20 @@ test("unknown T3 schema fails before writing", async (t) => {
   await assert.rejects(integrateT3(paths, manifest, configPath), /environment must be an array/);
   assert.equal(await readFile(configPath, "utf8"), original);
 });
+
+test("existing quota hub can be attached and removed without changing other usage sources", async (t) => {
+  const root = await temporaryRoot(t);
+  const paths = resolvePaths({ env: { CLAUDEX_HOME: root }, home: root });
+  await writeProxyConfig(paths, fixtureManifest());
+  const configPath = join(root, "t3-settings.json");
+  const { atomicWrite } = await import("../src/util.js");
+  await atomicWrite(paths.hubConfig, JSON.stringify({ host: "127.0.0.1", port: 8318, authDir: paths.authDir, managementKey: "test-hub-key" }));
+  await atomicWrite(configPath, JSON.stringify({ providerInstances: { claudeAgent: { environment: [] } }, usageLimitSources: { other: { enabled: true } } }));
+  await integrateT3(paths, fixtureManifest(), configPath, { includeHub: true });
+  let config = JSON.parse(await readFile(configPath, "utf8"));
+  assert.equal(config.usageLimitSources.claudex.managementKey, "test-hub-key");
+  assert.deepEqual(config.usageLimitSources.other, { enabled: true });
+  await integrateT3(paths, fixtureManifest(), configPath, { removeHub: true });
+  config = JSON.parse(await readFile(configPath, "utf8"));
+  assert.deepEqual(config.usageLimitSources, { other: { enabled: true } });
+});

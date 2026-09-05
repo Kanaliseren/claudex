@@ -97,3 +97,12 @@ test("named launches select each manifest model, pass Claude flags through, and 
   assert.deepEqual(JSON.parse(legacy.stdout).slice(-2), ["--print", "unchanged"]);
   assert.equal(await readFile(paths.proxyConfig, "utf8"), configBefore);
 });
+
+test("existing hub inspection never prints its management key", async (t) => {
+  const root = await temporaryRoot(t);
+  const paths = resolvePaths({ env: { CLAUDEX_HOME: root }, home: root });
+  await atomicWrite(paths.hubConfig, JSON.stringify({ host: "127.0.0.1", port: 8318, authDir: paths.authDir, managementKey: "test-secret-do-not-print" }));
+  const result = await run(process.execPath, [cli, "hub", "--json"], { env: { CLAUDEX_HOME: root } });
+  assert.deepEqual(JSON.parse(result.stdout), { url: "http://127.0.0.1:8318" });
+  assert.doesNotMatch(result.stdout + result.stderr, /test-secret|managementKey/);
+});

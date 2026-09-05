@@ -2,11 +2,13 @@ import { copyFile, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { atomicWrite, ensureDir, exists, readJson } from "./util.js";
 import { claudeEnvironment } from "./wrapper.js";
+import { readQuotaHubConfig } from "./config.js";
 
-export async function integrate(paths, manifest, target, { path, home = paths.userHome } = {}) {
+export async function integrate(paths, manifest, target, { path, home = paths.userHome, includeHub = false, removeHub = false } = {}) {
   if (!new Set(["paseo", "t3", "all"]).has(target)) {
     throw new Error("integration target must be paseo, t3, or all");
   }
+  if (includeHub && removeHub) throw new Error("--with-hub and --without-hub cannot be used together");
   const results = [];
   if (target === "paseo" || target === "all") {
     results.push(await integratePaseo(paths, manifest, path ?? join(home, ".paseo", "config.json")));
@@ -14,7 +16,7 @@ export async function integrate(paths, manifest, target, { path, home = paths.us
   if (target === "t3" || target === "all") {
     if (target === "all" && path) throw new Error("--path cannot be used with integration target all");
     results.push(
-      await integrateT3(paths, manifest, path ?? join(home, ".t3", "userdata", "settings.json")),
+      await integrateT3(paths, manifest, path ?? join(home, ".t3", "userdata", "settings.json"), { includeHub, removeHub }),
     );
   }
   return results;
@@ -42,7 +44,8 @@ export async function integratePaseo(paths, manifest, configPath) {
   return { target: "paseo", path: configPath, backup };
 }
 
-export async function integrateT3(paths, manifest, configPath) {
+export async function integrateT3(paths, manifest, configPath, { includeHub = false, removeHub = false } = {}) {
+  if (includeHub && removeHub) throw new Error("--with-hub and --without-hub cannot be used together");
   const config = await loadExistingConfig(configPath, "T3 Code");
   const provider = config?.providerInstances?.claudeAgent;
   if (!provider || typeof provider !== "object" || Array.isArray(provider)) {
@@ -90,6 +93,18 @@ export async function integrateT3(paths, manifest, configPath) {
     env.ANTHROPIC_AUTH_TOKEN,
     true,
   );
+  if (includeHub || removeHub) {
+    const sources = config.usageLimitSources;
+    if (sources !== undefined && (!sources || typeof sources !== "object" || Array.isArray(sources))) {
+      throw new Error("unsupported T3 Code config: usageLimitSources must be an object");
+    }
+    if (includeHub) {
+      const hub = await readQuotaHubConfig(paths.hubConfig);
+      config.usageLimitSources = { ...sources, claudex: {
+        kind: "cliproxy", label: "Claudex", url: `http://${hub.host}:${hub.port}`, managementKey: hub.managementKey, enabled: true,
+      } };
+    } else if (sources) delete sources.claudex;
+  }
   const backup = await backupAndWrite(paths, configPath, config, 0o600);
   return { target: "t3", path: configPath, backup };
 }

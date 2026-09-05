@@ -81,6 +81,15 @@ export async function readProxySummary(path) {
   };
 }
 
+export async function readQuotaHubConfig(path) {
+  const config = JSON.parse(await readFile(path, "utf8"));
+  if (config?.host !== "127.0.0.1" || !Number.isInteger(config.port) || config.port < 1 || config.port > 65535 ||
+      typeof config.authDir !== "string" || !config.authDir || typeof config.managementKey !== "string" || !config.managementKey) {
+    throw new Error("invalid existing quota hub configuration");
+  }
+  return config;
+}
+
 function parseYamlScalar(value) {
   if (value === undefined) return undefined;
   if (value.startsWith('"') && value.endsWith('"')) return JSON.parse(value);

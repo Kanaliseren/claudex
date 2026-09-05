@@ -48,10 +48,11 @@ claudex doctor [--json] [--live]
 claudex update [--upstream | --binary PATH] [--check [--json]]
 claudex upgrade [--upstream | --binary PATH] [--check [--json]]
 claudex rollback
-claudex integrate <paseo|t3|all> [--path PATH]
+claudex integrate <paseo|t3|all> [--path PATH] [--with-hub|--without-hub]
 claudex claude [CLAUDE OPTIONS...]
 claudex run <sol|terra|opus|fable> [--] [CLAUDE OPTIONS...]
 claudex models [--json]
+claudex hub [--json]
 claudex status [--json]
 ```
 
@@ -164,6 +165,9 @@ Claude Code validation versions remain recorded in the manifest.
 The local quota-hub script and configuration, when already installed, remain
 independent of the package. Proxy upgrades restart an existing systemd quota hub
 with its proxy and preserve its files and T3 settings.
+`hub` shows the existing hub URL without printing its management key.
+`integrate t3 --with-hub` connects an existing hub; `--without-hub` removes only
+its T3 usage source. Neither option provisions a new hub server.
 
 Maintainers: follow [`docs/updating.md`](docs/updating.md) when promoting a proxy
 or Claude Code release.

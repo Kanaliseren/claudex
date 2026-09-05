@@ -6,6 +6,7 @@ import { login, rollback, setup, updateClaudeCode, upgrade } from "./lifecycle.j
 import { runClaude } from "./wrapper.js";
 import { checkUpdate } from "./update-check.js";
 import { prepareUpstreamManifest } from "./promotion.js";
+import { readQuotaHubConfig } from "./config.js";
 
 export async function main(argv = process.argv.slice(2), io = console) {
   const [command = "help", ...tail] = argv;
@@ -53,6 +54,15 @@ export async function main(argv = process.argv.slice(2), io = console) {
       io.log("Models in the bundled tested channel (availability requires local provider login):");
       for (const model of models) io.log(`${model.name.padEnd(7)} ${model.alias} -> ${model.upstream}`);
     }
+    return 0;
+  }
+
+  if (command === "hub") {
+    rejectPositionals(parsed, command);
+    const hub = await readQuotaHubConfig(paths.hubConfig);
+    const summary = { url: `http://${hub.host}:${hub.port}` };
+    if (parsed.options.json) io.log(JSON.stringify(summary, null, 2));
+    else io.log(`Hub URL: ${summary.url}`);
     return 0;
   }
 
@@ -145,7 +155,9 @@ export async function main(argv = process.argv.slice(2), io = console) {
   if (command === "integrate") {
     const [target, ...extra] = parsed.positionals;
     if (!target || extra.length > 0) throw new Error("usage: claudex integrate <paseo|t3|all> [--path PATH]");
-    const results = await integrate(paths, manifest, target, { path: parsed.options.path });
+    const results = await integrate(paths, manifest, target, {
+      path: parsed.options.path, includeHub: Boolean(parsed.options.withHub), removeHub: Boolean(parsed.options.withoutHub),
+    });
     for (const result of results) io.log(`Updated ${result.target}: ${result.path} (backup: ${result.backup})`);
     io.log("No application was restarted; restart it when convenient.");
     return 0;
@@ -163,10 +175,11 @@ Usage:
   claudex update [--upstream | --binary PATH] [--check [--json]]
   claudex upgrade [--upstream | --binary PATH] [--check [--json]]
   claudex rollback
-  claudex integrate <paseo|t3|all> [--path PATH]
+  claudex integrate <paseo|t3|all> [--path PATH] [--with-hub|--without-hub]
   claudex claude [--] [CLAUDE OPTIONS...]
   claudex run <sol|terra|opus|fable> [--] [CLAUDE OPTIONS...]
   claudex models [--json]
+  claudex hub [--json]
   claudex status [--json]
 
 Environment:
@@ -185,6 +198,8 @@ function parseArguments(args) {
     ["--live", "live"],
     ["--check", "check"],
     ["--upstream", "upstream"],
+    ["--with-hub", "withHub"],
+    ["--without-hub", "withoutHub"],
   ]);
   const valued = new Map([
     ["--binary", "binary"],

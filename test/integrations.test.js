@@ -69,10 +69,11 @@ test("T3 integration updates only the Claude environment and protects the token"
   assert.equal(env.ANTHROPIC_BASE_URL.value, "http://127.0.0.1:18418");
   assert.equal(env.ANTHROPIC_AUTH_TOKEN.value, proxyKey);
   assert.equal(env.ANTHROPIC_AUTH_TOKEN.sensitive, true);
-  assert.equal(env.ANTHROPIC_AUTH_TOKEN.valueRedacted, true);
+  // A redacted value is a secret-store reference in T3, not an inline credential.
+  assert.equal(env.ANTHROPIC_AUTH_TOKEN.valueRedacted, undefined);
   assert.equal(env.ANTHROPIC_API_KEY.value, proxyKey);
   assert.equal(env.ANTHROPIC_API_KEY.sensitive, true);
-  assert.equal(env.ANTHROPIC_API_KEY.valueRedacted, true);
+  assert.equal(env.ANTHROPIC_API_KEY.valueRedacted, undefined);
   assert.equal(env.ANTHROPIC_MODEL.value, manifest.models.astra.alias);
   assert.equal(env.ANTHROPIC_DEFAULT_SONNET_MODEL.value, manifest.models.astra.alias);
   assert.equal(env.ANTHROPIC_DEFAULT_HAIKU_MODEL.value, manifest.models.sol.alias);
@@ -139,4 +140,10 @@ test("legacy T3 settings gain a Claude instance without changing other providers
   assert.equal(config.providerInstances.claudeAgent.driver, 'claudeAgent');
   assert.equal(config.providerInstances.claudeAgent.config.binaryPath, '/custom/claude');
   assert.equal(config.providerInstances.claudeAgent.config.future, 42);
+  for (const name of ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY"]) {
+    const entry = config.providerInstances.claudeAgent.environment.find((entry) => entry.name === name);
+    assert.equal(entry.sensitive, true);
+    assert.equal(entry.valueRedacted, undefined);
+    assert.ok(entry.value.length > 0);
+  }
 });

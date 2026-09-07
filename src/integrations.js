@@ -127,9 +127,11 @@ function upsertEnvironment(environment, name, value, sensitive) {
   if (existing) {
     existing.value = value;
     existing.sensitive = sensitive;
-    if (sensitive && "valueRedacted" in existing) existing.valueRedacted = true;
+    // T3 resolves valueRedacted entries from its secret store, ignoring inline values.
+    // We write a fresh credential; sensitive still keeps it out of UI responses.
+    delete existing.valueRedacted;
   } else {
-    next.push({ name, value, sensitive, ...(sensitive ? { valueRedacted: true } : {}) });
+    next.push({ name, value, sensitive });
   }
   return next;
 }

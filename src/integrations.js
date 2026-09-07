@@ -1,8 +1,8 @@
-import { copyFile, stat } from "node:fs/promises";
+import { copyFile, readFile, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { atomicWrite, ensureDir, exists, readJson } from "./util.js";
 import { claudeEnvironment } from "./wrapper.js";
-import { readQuotaHubConfig } from "./config.js";
+import { readProxyOptions, readProxySummary, readQuotaHubConfig } from "./config.js";
 
 export async function integrate(paths, manifest, target, { path, home = paths.userHome, includeHub = false, removeHub = false } = {}) {
   if (!new Set(["paseo", "t3", "all"]).has(target)) {
@@ -99,7 +99,12 @@ export async function integrateT3(paths, manifest, configPath, { includeHub = fa
       throw new Error("unsupported T3 Code config: usageLimitSources must be an object");
     }
     if (includeHub) {
-      const hub = await readQuotaHubConfig(paths.hubConfig);
+      const options = await readProxyOptions(paths.proxyConfig);
+      // Current T3 reads auth-files and api-call from the official management API.
+      const hub = options.dashboard
+        ? { ...(await readProxySummary(paths.proxyConfig)), managementKey: (await readFile(paths.dashboardKey, "utf8")).trim() }
+        : await readQuotaHubConfig(paths.hubConfig);
+      if (!hub.managementKey) throw new Error("missing dashboard management key");
       config.usageLimitSources = { ...sources, claudex: {
         kind: "cliproxy", label: "Claudex", url: `http://${hub.host}:${hub.port}`, managementKey: hub.managementKey, enabled: true,
       } };

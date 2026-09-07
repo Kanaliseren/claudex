@@ -130,7 +130,7 @@ boundary. Unsupported future configuration schemas fail without writing.
 ## Security model
 
 - Proxy listener: `127.0.0.1` only.
-- Remote management and the control panel: disabled.
+- Remote management: disabled. The local control panel is opt-in and requires a separate management key.
 - Config and OAuth files: user-only permissions.
 - Inbound proxy key: random per installation.
 - Upgrade canary: separate temporary auth directory with refresh tokens removed.
@@ -155,7 +155,8 @@ The local quota-hub script and configuration, when already installed, remain
 independent of the package. Proxy upgrades restart an existing systemd quota hub
 with its proxy and preserve its files and T3 settings.
 `hub` shows the existing hub URL without printing its management key.
-`integrate t3 --with-hub` connects an existing hub; `--without-hub` removes only
+`integrate t3 --with-hub` connects the official management API when the dashboard
+is enabled, or the legacy quota hub otherwise; `--without-hub` removes only
 its T3 usage source. Neither option provisions a new hub server.
 
 Maintainers: follow [`docs/updating.md`](docs/updating.md) when promoting a proxy
@@ -164,3 +165,36 @@ or Claude Code release.
 This project is separate from StringKe's similarly named Claudex. See the
 [source comparison](docs/claudex-comparison.md) for the replacement assessment
 and the CLI conveniences adapted here.
+
+## Multiple accounts and the dashboard
+
+Add another Claude account by running `claudex login claude` again and selecting
+the second account in the browser. Each distinct Claude account is stored separately.
+Current T3 reads accounts and usage through the official management API. Enable
+the dashboard below, then run `claudex integrate t3 --with-hub` to connect it.
+Each account appears separately in T3's Limits view. The legacy quota hub remains
+available for older clients.
+
+Enable the official CLIProxyAPI dashboard and keep conversations on the same
+available account with:
+
+```bash
+claudex configure --dashboard --session-affinity
+claudex dashboard
+```
+
+The command reports the dashboard URL and a private management-key file path.
+Use that key to sign into the dashboard, then open **OAuth** to add an account or
+**Quota Management** to inspect usage. The proxy and dashboard remain bound to
+loopback. On a remote server, forward the proxy port over SSH and open the
+forwarded URL locally. Never paste the management key or OAuth callback into chat.
+
+Round-robin distributes new sessions between eligible accounts. For a primary /
+backup arrangement, use `claudex configure --strategy fill-first`. Session
+bindings retain their account where possible, with failover when unavailable.
+Opus and Fable use Claude accounts; the Astra and Sol routes still use Codex.
+
+`claudex configure --no-dashboard` disables the dashboard and management API.
+`--no-session-affinity` disables session binding. Claudex preserves these supported
+settings across setup and updates; arbitrary edits in the panel's YAML editor
+are not preserved by Claudex configuration regeneration.

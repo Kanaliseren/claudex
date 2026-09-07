@@ -1,17 +1,20 @@
 import { readFile } from "node:fs/promises";
 import { atomicWrite, exists, randomSecret } from "./util.js";
 
-export async function writeProxyConfig(paths, manifest, { port = 8317 } = {}) {
+export async function writeProxyConfig(paths, manifest, { port = 8317, ...overrides } = {}) {
   let proxyKey = randomSecret();
   if (await exists(paths.proxyConfig)) {
     proxyKey = await readProxyKey(paths.proxyConfig);
   }
-  const yaml = renderProxyConfig({ paths, manifest, port, proxyKey });
+  const options = { ...(await readProxyOptions(paths.proxyConfig)), ...overrides };
+  const yaml = renderProxyConfig({ paths, manifest, port, proxyKey, ...options });
   await atomicWrite(paths.proxyConfig, yaml, 0o600);
   return { proxyKey, port };
 }
 
-export function renderProxyConfig({ paths, manifest, port, proxyKey }) {
+export function renderProxyConfig({ paths, manifest, port, proxyKey, dashboard = false, managementKey = "", sessionAffinity = false, strategy = "round-robin" }) {
+  if (dashboard && !managementKey) throw new Error("dashboard requires a management key");
+  if (!["round-robin", "fill-first"].includes(strategy)) throw new Error("unsupported routing strategy");
   const astra = manifest.models.astra;
   const sol = manifest.models.sol;
   const claudeCodeVersion = manifest.compatibility.claudeCode.tested.at(-1);
@@ -28,8 +31,8 @@ tls:
 
 remote-management:
   allow-remote: false
-  secret-key: ""
-  disable-control-panel: true
+  secret-key: ${yamlString(dashboard ? managementKey : "")}
+  disable-control-panel: ${!dashboard}
 
 auth-dir: ${yamlString(paths.authDir)}
 
@@ -40,6 +43,11 @@ debug: false
 logging-to-file: false
 request-log: false
 transient-error-cooldown-seconds: -1
+
+routing:
+  strategy: ${yamlString(strategy)}
+  session-affinity: ${Boolean(sessionAffinity)}
+  session-affinity-ttl: "1h"
 
 claude-header-defaults:
   user-agent: ${yamlString(`claude-cli/${claudeCodeVersion} (external, cli)`)}
@@ -76,7 +84,7 @@ export async function readProxySummary(path) {
     host: parseYamlScalar(scalar(text, "host")),
     port: Number(scalar(text, "port")),
     authDir: parseYamlScalar(scalar(text, "auth-dir")),
-    remoteManagementDisabled: /disable-control-panel:\s*true/.test(text) && /allow-remote:\s*false/.test(text),
+    remoteManagementDisabled: /allow-remote:\s*false/.test(text),
     tlsDisabled: /tls:\s*\n(?:\s+.*\n)*?\s+enable:\s*false/m.test(text),
   };
 }
@@ -103,4 +111,20 @@ function scalar(text, name) {
 
 function yamlString(value) {
   return JSON.stringify(String(value));
+}
+
+// Preserve supported local choices, including the hash written by CLIProxyAPI at startup.
+export async function readProxyOptions(path) {
+  if (!(await exists(path))) return {};
+  const text = await readFile(path, "utf8");
+  const blockValue = (block, name) => {
+    const contents = text.match(new RegExp(`^${block}:\\s*\\n((?:^[ \t]+.*\\n?)*)`, "m"))?.[1] ?? "";
+    return parseYamlScalar(contents.match(new RegExp(`^[ \t]+${name}:\\s*(.+?)\\s*$`, "m"))?.[1]);
+  };
+  return {
+    dashboard: blockValue("remote-management", "disable-control-panel") === "false",
+    managementKey: blockValue("remote-management", "secret-key") ?? "",
+    sessionAffinity: blockValue("routing", "session-affinity") === "true",
+    strategy: blockValue("routing", "strategy") ?? "round-robin",
+  };
 }

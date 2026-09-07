@@ -7,6 +7,7 @@ import { runClaude } from "./wrapper.js";
 import { checkUpdate } from "./update-check.js";
 import { prepareUpstreamManifest } from "./promotion.js";
 import { readQuotaHubConfig } from "./config.js";
+import { configure, dashboardSummary } from "./settings.js";
 
 export async function main(argv = process.argv.slice(2), io = console) {
   const [command = "help", ...tail] = argv;
@@ -40,6 +41,27 @@ export async function main(argv = process.argv.slice(2), io = console) {
   }
   const manifest = await loadManifest(parsed.options.manifest);
   const paths = resolvePaths();
+
+  if (command === "configure" || command === "dashboard") {
+    rejectPositionals(parsed, command);
+    if (parsed.options.dashboard && parsed.options.noDashboard) throw new Error("choose --dashboard or --no-dashboard");
+    if (parsed.options.sessionAffinity && parsed.options.noSessionAffinity) throw new Error("choose one session-affinity option");
+    const settings = command === "configure"
+      ? await configure(paths, manifest, {
+        dashboard: parsed.options.dashboard ? true : parsed.options.noDashboard ? false : undefined,
+        sessionAffinity: parsed.options.sessionAffinity ? true : parsed.options.noSessionAffinity ? false : undefined,
+        strategy: parsed.options.strategy,
+      })
+      : await dashboardSummary(paths);
+    if (parsed.options.json) io.log(JSON.stringify(settings, null, 2));
+    else {
+      io.log(`Dashboard: ${settings.enabled ? settings.url : "disabled"}`);
+      if (settings.enabled) io.log(`Management key file (keep private): ${settings.keyFile}`);
+      io.log(`Routing: ${settings.strategy}; session affinity: ${settings.sessionAffinity ? "enabled" : "disabled"}`);
+      if (settings.restarted === false) io.log("Restart the foreground proxy to apply these settings.");
+    }
+    return 0;
+  }
 
   if (command === "models") {
     rejectPositionals(parsed, command);
@@ -180,6 +202,8 @@ Usage:
   claudex run <astra|sol|opus|fable> [--] [CLAUDE OPTIONS...]
   claudex models [--json]
   claudex hub [--json]
+  claudex dashboard [--json]
+  claudex configure [--dashboard|--no-dashboard] [--session-affinity|--no-session-affinity] [--strategy round-robin|fill-first]
   claudex status [--json]
 
 Environment:
@@ -200,12 +224,17 @@ function parseArguments(args) {
     ["--upstream", "upstream"],
     ["--with-hub", "withHub"],
     ["--without-hub", "withoutHub"],
+    ["--dashboard", "dashboard"],
+    ["--no-dashboard", "noDashboard"],
+    ["--session-affinity", "sessionAffinity"],
+    ["--no-session-affinity", "noSessionAffinity"],
   ]);
   const valued = new Map([
     ["--binary", "binary"],
     ["--port", "port"],
     ["--path", "path"],
     ["--manifest", "manifest"],
+    ["--strategy", "strategy"],
   ]);
   for (let index = 0; index < args.length; index += 1) {
     const value = args[index];

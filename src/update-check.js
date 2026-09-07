@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { readProxyKey, readProxySummary, renderProxyConfig } from "./config.js";
+import { readProxyKey, readProxyOptions, readProxySummary, renderProxyConfig } from "./config.js";
 import { assetForPlatform } from "./manifest.js";
 import { loadState } from "./state.js";
 import { exists, sha256File } from "./util.js";
@@ -16,8 +16,10 @@ export async function checkUpdate(paths, manifest, { target } = {}) {
   if (await exists(paths.proxyConfig)) {
     const summary = await readProxySummary(paths.proxyConfig);
     const proxyKey = await readProxyKey(paths.proxyConfig);
-    const expected = renderProxyConfig({ paths, manifest, port: summary.port, proxyKey });
-    configMatchesChannel = (await readFile(paths.proxyConfig, "utf8")) === expected;
+    const expected = renderProxyConfig({ paths, manifest, port: summary.port, proxyKey, ...(await readProxyOptions(paths.proxyConfig)) });
+    // Upstream removes blank lines when persisting its bcrypt management-key hash.
+    const withoutBlankLines = (text) => text.split("\n").filter((line) => line.trim() !== "").join("\n");
+    configMatchesChannel = withoutBlankLines(await readFile(paths.proxyConfig, "utf8")) === withoutBlankLines(expected);
   }
   return {
     installed,

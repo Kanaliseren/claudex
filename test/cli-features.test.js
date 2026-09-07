@@ -60,6 +60,10 @@ test("update checks compare actual binary and config without modifying them", as
   assert.equal(binaryUpdate.action, "update");
   assert.equal(await readFile(paths.stateFile, "utf8"), beforeState);
   assert.equal(await readFile(paths.proxyConfig, "utf8"), beforeConfig);
+  await writeProxyConfig(paths, manifest, { dashboard: true, managementKey: "$2a$10$test-hash", sessionAffinity: true });
+  const hashedConfig = (await readFile(paths.proxyConfig, "utf8")).split("\n").filter((line) => line.trim()).join("\n");
+  await atomicWrite(paths.proxyConfig, hashedConfig);
+  assert.equal((await checkUpdate(paths, manifest, { target })).configMatchesChannel, true);
 });
 
 test("invalid run names and unsafe check combinations fail before invoking Claude or setup", async (t) => {

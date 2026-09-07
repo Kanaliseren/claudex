@@ -45,6 +45,7 @@ export function resolvePaths({ env = process.env, platform = process.platform, h
     stateDir,
     binDir,
     proxyConfig: join(configDir, "config.yaml"),
+    dashboardKey: join(configDir, "dashboard-key"),
     hubConfig: join(configDir, "quota-hub.json"),
     authDir: join(stateDir, "auth"),
     releasesDir: join(dataDir, "releases"),

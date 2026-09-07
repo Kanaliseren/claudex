@@ -110,3 +110,17 @@ test("existing quota hub can be attached and removed without changing other usag
   config = JSON.parse(await readFile(configPath, "utf8"));
   assert.deepEqual(config.usageLimitSources, { other: { enabled: true } });
 });
+
+test("T3 uses official account management when the dashboard is enabled", async (t) => {
+  const root = await temporaryRoot(t);
+  const paths = resolvePaths({ env: { CLAUDEX_HOME: root }, home: root });
+  await writeProxyConfig(paths, fixtureManifest(), { dashboard: true, managementKey: "$2a$10$stored-hash", port: 18417 });
+  await writeFile(paths.dashboardKey, "test-dashboard-key\n", { mode: 0o600 });
+  const configPath = join(root, "t3-settings.json");
+  await writeFile(configPath, JSON.stringify({ providerInstances: { claudeAgent: { environment: [] } }, usageLimitSources: { other: { enabled: true } } }));
+  await integrateT3(paths, fixtureManifest(), configPath, { includeHub: true });
+  const config = JSON.parse(await readFile(configPath, "utf8"));
+  assert.equal(config.usageLimitSources.claudex.url, "http://127.0.0.1:18417");
+  assert.equal(config.usageLimitSources.claudex.managementKey, "test-dashboard-key");
+  assert.deepEqual(config.usageLimitSources.other, { enabled: true });
+});

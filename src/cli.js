@@ -26,7 +26,7 @@ export async function main(argv = process.argv.slice(2), io = console) {
       if (!Object.hasOwn(manifest.models, name)) {
         throw new Error(`usage: claudex run <${Object.keys(manifest.models).join("|")}> [--] [CLAUDE OPTIONS...]`);
       }
-      model = manifest.models[name].alias;
+      model = manifest.models[name].upstream;
       args = rest;
     }
     args = args[0] === "--" ? args.slice(1) : args;

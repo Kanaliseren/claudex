@@ -28,9 +28,9 @@ test("shared clients use existing accounts and T3 aliases without owning the pro
   await integrateT3(paths, manifest, settings, { includeHub: true });
   const config = JSON.parse(await readFile(settings, "utf8"));
   const env = Object.fromEntries(config.providerInstances.claudeAgent.environment.map(({ name, value }) => [name, value]));
-  assert.equal(env.ANTHROPIC_DEFAULT_SONNET_MODEL, "claude-sonnet-5");
-  assert.equal(env.ANTHROPIC_DEFAULT_HAIKU_MODEL, "claude-haiku-4-5");
-  assert.deepEqual(config.providerInstances.claudeAgent.config.customModels, ["claude-opus-5", "claude-fable-5-1"]);
+  assert.equal(env.ANTHROPIC_DEFAULT_SONNET_MODEL, "gpt-6-astra");
+  assert.equal(env.ANTHROPIC_DEFAULT_HAIKU_MODEL, "gpt-5.6-sol");
+  assert.deepEqual(config.providerInstances.claudeAgent.config.customModels, ["gpt-6-astra", "gpt-5.6-sol", "claude-opus-5", "claude-fable-5-1"]);
   assert.equal(config.usageLimitSources.claudex.managementKey, "test-admin");
   for (const action of [() => setup(paths, manifest), () => upgrade(paths, manifest), () => rollback(paths), () => login(paths), () => configure(paths, manifest)]) {
     await assert.rejects(action(), /shared proxy/);

@@ -92,7 +92,7 @@ test("named launches select each manifest model, pass Claude flags through, and 
     const result = await run(process.execPath, [cli, "run", name, "--", "--print", "prompt with spaces", "--output-format", "json"], { env, allowFailure: true });
     assert.equal(result.code, 7);
     const args = JSON.parse(result.stdout);
-    assert.deepEqual(args.slice(-6), ["--model", model.alias, "--print", "prompt with spaces", "--output-format", "json"]);
+    assert.deepEqual(args.slice(-6), ["--model", model.upstream, "--print", "prompt with spaces", "--output-format", "json"]);
     assert.ok(args.includes("--append-system-prompt"));
     assert.ok(args.includes("--exclude-dynamic-system-prompt-sections"));
   }

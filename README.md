@@ -63,13 +63,45 @@ claudex run opus
 claudex run sol -- --print "Explain this function" --output-format json
 ```
 
-`models` lists the aliases and upstream models in the bundled tested channel;
+`models` lists the proxy aliases and upstream models in the bundled tested channel;
 it does not contact a provider or verify login. `run` selects that model through
-Claude Code's `--model` flag for one session and forwards the remaining arguments
+Claude Code's `--model` flag using the upstream ID for one session and forwards the remaining arguments
 unchanged. An explicit later `--model` flag can override the named choice. It
 preserves Claude Code's exit status and leaves installed routing and integrations
 unchanged. Astra and Sol use Codex OAuth; Opus and Fable use native Claude OAuth.
 `claudex claude` continues to launch with the existing defaults.
+
+### Context and reasoning
+
+Claudex pins Claude Code's `sonnet` selector to `gpt-6-astra` and `haiku` to
+`gpt-5.6-sol`. Both use a **272,000-token** Codex subscription window, with native
+automatic compaction at approximately **201,600 tokens** in Claude Code 2.1.263.
+The configuration uses `CLAUDE_CODE_MAX_CONTEXT_TOKENS=272000` for custom models
+and `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=80`; Claude reserves output space before
+applying that percentage. It does not advertise a 1M window for either model.
+
+Native Workflow calls such as `agent(prompt, { model: 'sonnet', effort: 'high' })`
+keep working. Claudex declares Claude's native effort and adaptive-thinking
+capabilities for both pins, so effort controls remain available. Claude owns
+subagent context, compaction, continuation, and Workflow results; Claudex adds no
+compaction service, retry loop, or replacement agent runner. Native Claude models
+keep their model windows; the percentage override also applies wherever Claude
+already enforces threshold-based compaction.
+
+In T3, select the registered **gpt-6-astra** or **gpt-5.6-sol** custom model for
+the main agent. Exact legacy IDs such as `claude-sonnet-5` and
+`claude-haiku-4-5` remain proxy-compatible, but Claude gives those IDs its built-in
+context limits. The family selectors `sonnet` and `haiku` use the correct pins.
+After upgrading the package, regenerate the wrapper with `claudex update` (or
+reconnect a shared client), rerun `claudex integrate t3`, and start a new provider
+session. Running processes retain their original environment.
+
+To verify native Workflow execution, effort forwarding, and automatic compaction
+against a local mock endpoint (no subscription requests), run:
+
+```bash
+CLAUDEX_TEST_NATIVE=1 node --test test/native-context.test.js
+```
 
 ## Upgrade policy
 

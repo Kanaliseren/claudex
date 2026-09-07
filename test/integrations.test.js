@@ -62,7 +62,7 @@ test("T3 integration updates only the Claude environment and protects the token"
   assert.equal(updated.providerInstances.claudeAgent.future, 42);
   assert.deepEqual(updated.providerInstances.claudeAgent.config, {
     futureConfig: true,
-    customModels: ["company-private-model", "claude-opus-5", "claude-fable-5-1"],
+    customModels: ["company-private-model", "gpt-6-astra", "gpt-5.6-sol", "claude-opus-5", "claude-fable-5-1"],
   });
   assert.deepEqual(updated.providerInstances.futureProvider, { keep: true });
   assert.equal(env.KEEP_ME.value, "yes");
@@ -74,9 +74,13 @@ test("T3 integration updates only the Claude environment and protects the token"
   assert.equal(env.ANTHROPIC_API_KEY.value, proxyKey);
   assert.equal(env.ANTHROPIC_API_KEY.sensitive, true);
   assert.equal(env.ANTHROPIC_API_KEY.valueRedacted, undefined);
-  assert.equal(env.ANTHROPIC_MODEL.value, manifest.models.astra.alias);
-  assert.equal(env.ANTHROPIC_DEFAULT_SONNET_MODEL.value, manifest.models.astra.alias);
-  assert.equal(env.ANTHROPIC_DEFAULT_HAIKU_MODEL.value, manifest.models.sol.alias);
+  assert.equal(env.ANTHROPIC_MODEL.value, manifest.models.astra.upstream);
+  assert.equal(env.ANTHROPIC_DEFAULT_SONNET_MODEL.value, manifest.models.astra.upstream);
+  assert.equal(env.ANTHROPIC_DEFAULT_HAIKU_MODEL.value, manifest.models.sol.upstream);
+  assert.equal(env.CLAUDE_CODE_MAX_CONTEXT_TOKENS.value, "272000");
+  assert.equal(env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE.value, "80");
+  assert.match(env.ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES.value, /adaptive_thinking/);
+  assert.match(env.ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES.value, /effort/);
   assert.equal(env.ENABLE_TOOL_SEARCH.value, "true");
   assert.equal(env.API_TIMEOUT_MS.value, "3000000");
   if (process.platform !== "win32") assert.equal((await stat(configPath)).mode & 0o777, 0o600);

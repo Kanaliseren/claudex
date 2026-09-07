@@ -31,14 +31,11 @@ export async function integratePaseo(paths, manifest, configPath) {
   if (provider.env !== undefined && (!provider.env || typeof provider.env !== "object" || Array.isArray(provider.env))) {
     throw new Error("unsupported Paseo config: Claude provider env must be an object");
   }
-  const env = await claudeEnvironment(paths, manifest);
+  const { ANTHROPIC_AUTH_TOKEN: _proxyKey, ...env } = await claudeEnvironment(paths, manifest);
   provider.command = paths.wrapper;
   provider.env = {
     ...(provider.env ?? {}),
-    ANTHROPIC_BASE_URL: env.ANTHROPIC_BASE_URL,
-    ANTHROPIC_DEFAULT_SONNET_MODEL: env.ANTHROPIC_DEFAULT_SONNET_MODEL,
-    ANTHROPIC_DEFAULT_HAIKU_MODEL: env.ANTHROPIC_DEFAULT_HAIKU_MODEL,
-    API_TIMEOUT_MS: env.API_TIMEOUT_MS,
+    ...env,
   };
   const backup = await backupAndWrite(paths, configPath, config, 0o600);
   return { target: "paseo", path: configPath, backup };
@@ -71,22 +68,14 @@ export async function integrateT3(paths, manifest, configPath, { includeHub = fa
     throw new Error("unsupported T3 Code config: Claude customModels must contain model names");
   }
   const env = await claudeEnvironment(paths, manifest);
-  const nativeModels = Object.values(manifest.models)
-    .filter((model) => model.upstream === model.alias)
-    .map((model) => model.alias);
+  const models = Object.values(manifest.models).map((model) => model.upstream);
   provider.config = {
     ...(provider.config ?? {}),
-    customModels: [...new Set([...(provider.config?.customModels ?? []), ...nativeModels])],
+    customModels: [...new Set([...(provider.config?.customModels ?? []), ...models])],
   };
-  for (const name of [
-    "ANTHROPIC_BASE_URL",
-    "ANTHROPIC_MODEL",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-    "ENABLE_TOOL_SEARCH",
-    "API_TIMEOUT_MS",
-  ]) {
-    provider.environment = upsertEnvironment(provider.environment, name, env[name], false);
+  for (const [name, value] of Object.entries(env)) {
+    if (name === "ANTHROPIC_AUTH_TOKEN") continue;
+    provider.environment = upsertEnvironment(provider.environment, name, value, false);
   }
   provider.environment = upsertEnvironment(
     provider.environment,

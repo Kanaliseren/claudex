@@ -4,8 +4,8 @@ import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { readProxyKey, readProxySummary, renderProxyConfig, writeProxyConfig } from "../src/config.js";
 import { resolvePaths } from "../src/paths.js";
-import { atomicWrite } from "../src/util.js";
-import { runClaude, writeClaudeWrapper } from "../src/wrapper.js";
+import { atomicWrite, run, shellQuote } from "../src/util.js";
+import { claudeEnvironment, runClaude, writeClaudeWrapper } from "../src/wrapper.js";
 import { fixtureManifest, temporaryRoot } from "../test-support/helpers.js";
 
 const manifest = fixtureManifest();
@@ -93,5 +93,28 @@ test("Claude command keeps the proxy ToolSearch override on an untested future v
 
   assert.equal(await runClaude(paths, manifest, ["-p", "hello"], { runCommand }), 0);
   assert.equal(invocation.options.env.ENABLE_TOOL_SEARCH, "true");
+  assert.equal(invocation.options.env.ANTHROPIC_MODEL, "gpt-6-astra");
+  assert.equal(invocation.options.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, "272000");
+  assert.equal(invocation.options.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, "80");
   assert.deepEqual(invocation.args.slice(-2), ["-p", "hello"]);
+});
+
+test("installed wrappers pass the same model budgets and capabilities as direct launches", { skip: process.platform === "win32" }, async (t) => {
+  const root = await temporaryRoot(t);
+  const paths = resolvePaths({ env: { CLAUDEX_HOME: root }, home: root });
+  await writeProxyConfig(paths, manifest);
+  const expected = await claudeEnvironment(paths, manifest);
+  const fake = `${root}/claude`;
+  const capture = `${root}/capture.mjs`;
+  await atomicWrite(capture, `console.log(JSON.stringify(Object.fromEntries(${JSON.stringify(Object.keys(expected))}.map(name => [name, process.env[name]]))));\n`);
+  await atomicWrite(fake, `#!/bin/sh\nif [ "$1" = "--help" ]; then exit 0; fi\nexec ${shellQuote(process.execPath)} ${shellQuote(capture)}\n`, 0o700);
+  await writeClaudeWrapper(paths, manifest);
+  const result = await run(paths.wrapper, [], { env: { CLAUDE_CODE_BINARY: fake } });
+  assert.deepEqual(JSON.parse(result.stdout), expected);
+
+  await writeClaudeWrapper(paths, manifest, { platform: "win32" });
+  const windows = await readFile(paths.wrapper, "utf8");
+  for (const name of Object.keys(expected).filter((name) => name.includes("MODEL") || name.includes("CONTEXT") || name.includes("COMPACT"))) {
+    assert.ok(windows.includes(`set "${name}=${expected[name]}"`), name);
+  }
 });

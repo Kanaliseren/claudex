@@ -47,6 +47,13 @@ export async function integratePaseo(paths, manifest, configPath) {
 export async function integrateT3(paths, manifest, configPath, { includeHub = false, removeHub = false } = {}) {
   if (includeHub && removeHub) throw new Error("--with-hub and --without-hub cannot be used together");
   const config = await loadExistingConfig(configPath, "T3 Code");
+  // T3 still hydrates providers.<driver> when no explicit instance exists.
+  // Materialize only Claude's instance, preserving its legacy settings and all other drivers.
+  if (config.providerInstances === undefined && config.providers && typeof config.providers === "object" && !Array.isArray(config.providers)) {
+    const legacy = config.providers.claudeAgent ?? {};
+    if (!legacy || typeof legacy !== "object" || Array.isArray(legacy)) throw new Error("unsupported legacy T3 Claude settings");
+    config.providerInstances = { claudeAgent: { driver: "claudeAgent", config: { ...legacy }, environment: [] } };
+  }
   const provider = config?.providerInstances?.claudeAgent;
   if (!provider || typeof provider !== "object" || Array.isArray(provider)) {
     throw new Error("unsupported T3 Code config: providerInstances.claudeAgent is missing");

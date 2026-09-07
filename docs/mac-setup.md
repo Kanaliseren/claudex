@@ -2,7 +2,7 @@
 
 Repository: https://github.com/Kanaliseren/claudex
 
-Install [Node.js 20+](https://nodejs.org/en/download) and Git first. On macOS,
+Install [Node.js 24](https://nodejs.org/en/download) and Git first. On macOS,
 `xcode-select --install` installs Apple's command-line tools, including Git;
 finish its installer before continuing.
 

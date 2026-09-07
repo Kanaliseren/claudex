@@ -8,6 +8,7 @@ import { checkUpdate } from "./update-check.js";
 import { prepareUpstreamManifest } from "./promotion.js";
 import { readQuotaHubConfig } from "./config.js";
 import { configure, dashboardSummary } from "./settings.js";
+import { assertOwnedProxy, connectSharedFile } from "./shared.js";
 
 export async function main(argv = process.argv.slice(2), io = console) {
   const [command = "help", ...tail] = argv;
@@ -41,6 +42,14 @@ export async function main(argv = process.argv.slice(2), io = console) {
   }
   const manifest = await loadManifest(parsed.options.manifest);
   const paths = resolvePaths();
+
+  if (command === "connect") {
+    rejectPositionals(parsed, command);
+    const result = await connectSharedFile(paths, manifest, parsed.options.file);
+    io.log(`Connected to shared proxy: ${result.url}`);
+    io.log("Next: claudex integrate t3 --with-hub");
+    return 0;
+  }
 
   if (command === "configure" || command === "dashboard") {
     rejectPositionals(parsed, command);
@@ -126,8 +135,8 @@ export async function main(argv = process.argv.slice(2), io = console) {
     const status = await statusSummary(paths);
     if (parsed.options.json) io.log(JSON.stringify(status, null, 2));
     else {
-      io.log(`Active: ${status.activeRelease?.version ?? "not installed"}`);
-      io.log(`Service: ${status.service.installed ? (status.service.active ? "active" : "inactive") : "not installed"}`);
+      io.log(`Active: ${status.sharedProxyUrl ? `shared proxy at ${status.sharedProxyUrl}` : status.activeRelease?.version ?? "not installed"}`);
+      io.log(`Service: ${status.sharedProxyUrl ? "managed by the proxy owner" : status.service.installed ? (status.service.active ? "active" : "inactive") : "not installed"}`);
       io.log(`Config: ${status.config}`);
       io.log(`Wrapper: ${status.wrapper}`);
     }
@@ -136,6 +145,7 @@ export async function main(argv = process.argv.slice(2), io = console) {
 
   if (command === "update" || command === "upgrade") {
     rejectPositionals(parsed, command);
+    await assertOwnedProxy(paths);
     if (parsed.options.upstream && (parsed.options.binary || parsed.options.manifest)) {
       throw new Error("--upstream cannot be combined with --binary or --manifest");
     }
@@ -192,6 +202,7 @@ const helpText = `claudex — route Claude Code through local Codex and Claude O
 
 Usage:
   claudex setup [--binary PATH] [--port PORT] [--no-service]
+  claudex connect --file PATH
   claudex login [codex|claude] [--device]
   claudex doctor [--json] [--live]
   claudex update [--upstream | --binary PATH] [--check [--json]]
@@ -235,6 +246,7 @@ function parseArguments(args) {
     ["--path", "path"],
     ["--manifest", "manifest"],
     ["--strategy", "strategy"],
+    ["--file", "file"],
   ]);
   for (let index = 0; index < args.length; index += 1) {
     const value = args[index];

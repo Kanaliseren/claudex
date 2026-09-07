@@ -124,3 +124,19 @@ test("T3 uses official account management when the dashboard is enabled", async 
   assert.equal(config.usageLimitSources.claudex.managementKey, "test-dashboard-key");
   assert.deepEqual(config.usageLimitSources.other, { enabled: true });
 });
+
+test("legacy T3 settings gain a Claude instance without changing other providers", async (t) => {
+  const root = await temporaryRoot(t);
+  const paths = resolvePaths({ env: { CLAUDEX_HOME: root }, home: root });
+  await writeProxyConfig(paths, fixtureManifest());
+  const file = join(root, 'legacy-t3.json');
+  const providers = { codex: { enabled: true, future: 'keep' }, claudeAgent: { binaryPath: '/custom/claude', future: 42 } };
+  await writeFile(file, JSON.stringify({ providers, environmentIcon: 'server' }));
+  await integrateT3(paths, fixtureManifest(), file);
+  const config = JSON.parse(await readFile(file, 'utf8'));
+  assert.deepEqual(config.providers, providers);
+  assert.equal(config.environmentIcon, 'server');
+  assert.equal(config.providerInstances.claudeAgent.driver, 'claudeAgent');
+  assert.equal(config.providerInstances.claudeAgent.config.binaryPath, '/custom/claude');
+  assert.equal(config.providerInstances.claudeAgent.config.future, 42);
+});

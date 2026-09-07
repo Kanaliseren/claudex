@@ -10,8 +10,12 @@ uploaded, copied between users, or printed by this package.
 
 ## Install
 
-Requires Node.js 20+ and Claude Code. On a Mac, follow the
+Use Node.js 24 and Claude Code (Node.js 20 remains supported). On a Mac, follow the
 [short setup guide](docs/mac-setup.md).
+
+For a Mac connected to the shared riz-server environment, use the
+[Dren handoff](docs/dren-mac-handoff.md): one proxy manages the subscriptions,
+while each Unix user has their own Claude Code and T3 client configuration.
 
 ```bash
 npm install -g github:Kanaliseren/claudex

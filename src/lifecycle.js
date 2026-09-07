@@ -6,8 +6,10 @@ import { readProxyKey, readProxySummary, writeProxyConfig } from "./config.js";
 import { installService, restartService, stopService } from "./service.js";
 import { loadState, saveState } from "./state.js";
 import { writeClaudeWrapper } from "./wrapper.js";
+import { assertOwnedProxy } from "./shared.js";
 
 export async function setup(paths, manifest, options = {}) {
+  await assertOwnedProxy(paths);
   return withFileLock(paths.lockFile, async () => {
     await prepareDirectories(paths);
     const release = await stageRelease(paths, manifest, options);
@@ -38,6 +40,7 @@ export async function setup(paths, manifest, options = {}) {
 }
 
 export async function upgrade(paths, manifest, options = {}) {
+  await assertOwnedProxy(paths);
   return withFileLock(paths.lockFile, async () => {
     await prepareDirectories(paths);
     const oldState = await loadState(paths);
@@ -92,6 +95,7 @@ function olderRelease(candidate, installed) {
 }
 
 export async function rollback(paths, options = {}) {
+  await assertOwnedProxy(paths);
   return withFileLock(paths.lockFile, async () => {
     const state = await loadState(paths);
     if (!state.previousRelease) throw new Error("no previous release is available for rollback");
@@ -134,6 +138,7 @@ export async function updateClaudeCode({
 }
 
 export async function login(paths, { provider = "codex", device = false, runCommand = run } = {}) {
+  await assertOwnedProxy(paths);
   if (!(await exists(paths.currentBinary)) || !(await exists(paths.proxyConfig))) {
     throw new Error("run setup before login");
   }

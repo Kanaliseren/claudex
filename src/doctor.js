@@ -36,7 +36,9 @@ export async function diagnose(paths, manifest, { live = false, fetchImpl = fetc
     }
   }
 
-  if (!(await exists(paths.currentBinary))) {
+  if (state.sharedProxy) {
+    add("binary", "pass", "shared proxy; binary and OAuth sessions are managed by its owner");
+  } else if (!(await exists(paths.currentBinary))) {
     add("binary", "fail", `missing: ${paths.currentBinary}`);
   } else {
     try {
@@ -49,19 +51,22 @@ export async function diagnose(paths, manifest, { live = false, fetchImpl = fetc
     }
   }
 
-  const credentials = await credentialSummary(paths.authDir);
-  add(
-    "oauth",
-    credentials.codex > 0 && credentials.claude > 0 ? "pass" : "warn",
-    `local credentials: Codex ${credentials.codex}, Claude ${credentials.claude}`,
-  );
-  for (const insecure of credentials.insecure) add("oauth permissions", "fail", insecure);
+  if (!state.sharedProxy) {
+    const credentials = await credentialSummary(paths.authDir);
+    add(
+      "oauth",
+      credentials.codex > 0 && credentials.claude > 0 ? "pass" : "warn",
+      `local credentials: Codex ${credentials.codex}, Claude ${credentials.claude}`,
+    );
+    for (const insecure of credentials.insecure) add("oauth permissions", "fail", insecure);
+  }
 
   const claude = await claudeSummary(manifest, runCommand);
   add("claude", claude.status, claude.detail);
 
   const service = await serviceStatus(paths, { runCommand }).catch((error) => ({ error: error.message }));
-  if (service.error) add("service", "warn", service.error);
+  if (state.sharedProxy) add("service", "pass", "shared proxy; no second service installed");
+  else if (service.error) add("service", "warn", service.error);
   else if (!service.installed) add("service", "warn", "not installed; foreground use only");
   else add("service", service.active ? "pass" : "fail", `${service.kind} is ${service.active ? "active" : "inactive"}`);
 
@@ -99,6 +104,7 @@ export async function statusSummary(paths, { runCommand = run } = {}) {
   const state = await loadState(paths);
   const service = await serviceStatus(paths, { runCommand });
   return {
+    ...(state.sharedProxy ? { sharedProxyUrl: state.sharedProxyUrl } : {}),
     activeRelease: state.activeRelease ?? null,
     previousRelease: state.previousRelease ?? null,
     service,

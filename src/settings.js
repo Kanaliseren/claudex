@@ -3,8 +3,10 @@ import { randomBytes } from "node:crypto";
 import { readProxyKey, readProxyOptions, readProxySummary, writeProxyConfig } from "./config.js";
 import { restartService } from "./service.js";
 import { atomicWrite, exists, sleep, withFileLock } from "./util.js";
+import { assertOwnedProxy } from "./shared.js";
 
 export async function configure(paths, manifest, options = {}) {
+  await assertOwnedProxy(paths);
   return withFileLock(paths.lockFile, async () => {
     const previous = await readFile(paths.proxyConfig, "utf8");
     const { port } = await readProxySummary(paths.proxyConfig);

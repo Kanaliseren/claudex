@@ -95,7 +95,7 @@ test("Claude command keeps the proxy ToolSearch override on an untested future v
   assert.equal(invocation.options.env.ENABLE_TOOL_SEARCH, "true");
   assert.equal(invocation.options.env.ANTHROPIC_MODEL, "gpt-6-astra");
   assert.equal(invocation.options.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, "272000");
-  assert.equal(invocation.options.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, "80");
+  assert.equal(invocation.options.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, "87.3015873015873");
   assert.deepEqual(invocation.args.slice(-2), ["-p", "hello"]);
 });
 

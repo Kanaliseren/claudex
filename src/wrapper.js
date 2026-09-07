@@ -6,7 +6,7 @@ const identityPrompt =
 
 // Use provider IDs: Claude's built-in Sonnet/Haiku IDs ignore custom context limits.
 // Both Codex subscription models use 272K. Claude reserves 20K for output before
-// applying 80%, so native compaction starts at about 201,600 occupied tokens.
+// applying the percentage, so target 220K out of the remaining 252K.
 function modelEnvironment(manifest) {
   const capabilities = "effort,xhigh_effort,max_effort,thinking,adaptive_thinking,interleaved_thinking";
   return {
@@ -18,7 +18,7 @@ function modelEnvironment(manifest) {
     ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME: "Haiku (Sol)",
     ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES: capabilities,
     CLAUDE_CODE_MAX_CONTEXT_TOKENS: "272000",
-    CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "80",
+    CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: String((220000 / 252000) * 100),
   };
 }
 

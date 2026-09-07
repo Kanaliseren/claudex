@@ -40,7 +40,7 @@ test("native Workflow workers retain effort and compact within the 272K budget",
       const messages = JSON.stringify(body.messages);
       const worker = workers.get(body.model);
       if (worker && messages.includes("Your task is to create a detailed summary of the conversation")) {
-        assert.equal(worker.turns, 2, "compact after 205K, not the preceding 190K request");
+        assert.equal(worker.turns, 2, "compact after 221K, not the preceding 219K request");
         worker.compacted = true;
         reply(text(`<summary>COMPACT_PROBE_${body.model}. Finish the assigned task.</summary>`));
         return;
@@ -56,7 +56,7 @@ test("native Workflow workers retain effort and compact within the 272K budget",
         worker.turns += 1;
         if (worker.turns <= 2) {
           reply([{ type: "tool_use", id: `toolu_read_${sequence}`, name: "Read", input: { file_path: fixture } }],
-            worker.turns === 1 ? 190000 : 205000);
+            worker.turns === 1 ? 219000 : 221000);
         } else {
           assert.ok(worker.compacted);
           assert.ok(messages.includes(`COMPACT_PROBE_${body.model}`), "continue with the compacted summary");

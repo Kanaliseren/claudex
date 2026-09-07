@@ -78,7 +78,7 @@ test("T3 integration updates only the Claude environment and protects the token"
   assert.equal(env.ANTHROPIC_DEFAULT_SONNET_MODEL.value, manifest.models.astra.upstream);
   assert.equal(env.ANTHROPIC_DEFAULT_HAIKU_MODEL.value, manifest.models.sol.upstream);
   assert.equal(env.CLAUDE_CODE_MAX_CONTEXT_TOKENS.value, "272000");
-  assert.equal(env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE.value, "80");
+  assert.equal(env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE.value, "87.3015873015873");
   assert.match(env.ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES.value, /adaptive_thinking/);
   assert.match(env.ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES.value, /effort/);
   assert.equal(env.ENABLE_TOOL_SEARCH.value, "true");

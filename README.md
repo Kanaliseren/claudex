@@ -75,9 +75,9 @@ unchanged. Astra and Sol use Codex OAuth; Opus and Fable use native Claude OAuth
 
 Claudex pins Claude Code's `sonnet` selector to `gpt-6-astra` and `haiku` to
 `gpt-5.6-sol`. Both use a **272,000-token** Codex subscription window, with native
-automatic compaction at approximately **201,600 tokens** in Claude Code 2.1.263.
+automatic compaction at approximately **220,000 tokens** in Claude Code 2.1.263.
 The configuration uses `CLAUDE_CODE_MAX_CONTEXT_TOKENS=272000` for custom models
-and `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=80`; Claude reserves output space before
+and `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=87.3015873015873`; Claude reserves output space before
 applying that percentage. It does not advertise a 1M window for either model.
 
 Native Workflow calls such as `agent(prompt, { model: 'sonnet', effort: 'high' })`

@@ -44,7 +44,7 @@ test("preview model preparation preserves working routes and distinguishes catal
   assert.equal(ready.checks.find((entry) => entry.name === "Claude Opus 5.5").status, "pass");
   assert.equal((await check([])).ok, false);
 
-  const catalog = { claude: [{ id: "claude-opus-5" }, { id: "claude-fable-5-1" }], "codex-pro": [{ id: "gpt-6-astra" }, { id: "gpt-5.6-sol" }] };
+  const catalog = { claude: [{ id: "claude-opus-5" }, { id: "claude-fable-5-1" }], "codex-pro": [{ id: "gpt-6-astra" }, { id: "gpt-6-sol" }] };
   assert.doesNotThrow(() => validateUpstreamModels(manifest, catalog));
   manifest.models.opus55.preview = false;
   assert.throws(() => validateUpstreamModels(manifest, catalog), /missing configured model: opus55/);

@@ -19,7 +19,7 @@ test("native Workflow workers retain effort and compact within the 272K budget",
   await writeFile(fixture, "Synthetic context fixture.\n");
   const workers = new Map([
     ["gpt-6-astra", { effort: "high", turns: 0, compacted: false, continued: false }],
-    ["gpt-5.6-sol", { effort: "low", turns: 0, compacted: false, continued: false }],
+    ["gpt-6-sol", { effort: "low", turns: 0, compacted: false, continued: false }],
   ]);
   const failures = [];
   let started = false;

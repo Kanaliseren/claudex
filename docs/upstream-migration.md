@@ -19,7 +19,7 @@ Both the official release's embedded catalog and the remote model catalog at
 | --- | --- | --- |
 | Fable | `claude-fable-5-1` | Claude |
 | Opus | `claude-opus-5` | Claude |
-| Sol | `gpt-5.6-sol` | Codex Team, Plus, Pro |
+| Sol | `gpt-6-sol` | Codex Team, Plus, Pro |
 | Terra | `gpt-5.6-terra` | Codex Free, Team, Plus, Pro |
 
 Sources: [embedded catalog](https://github.com/router-for-me/CLIProxyAPI/blob/5208aec703b5ce7e3445f6e9d91cc13b3e78003a/internal/registry/models/models.json),

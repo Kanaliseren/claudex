@@ -2,7 +2,7 @@
 
 Run Claude Code through local Codex and Claude OAuth sessions. Claudex safely installs
 and manages the CLIProxyAPI bridge used by Claude Code, Paseo, and T3 Code. Sonnet
-routes to GPT-6 Astra, Haiku routes to GPT-5.6 Sol, and Opus and Fable remain native
+routes to GPT-6 Astra, Haiku routes to GPT-6 Sol, and Opus and Fable remain native
 Claude models with their native context windows.
 
 OAuth credentials are created locally on every machine. They are never bundled,
@@ -74,7 +74,7 @@ unchanged. Astra and Sol use Codex OAuth; Opus and Fable use native Claude OAuth
 ### Context and reasoning
 
 Claudex pins Claude Code's `sonnet` selector to `gpt-6-astra` and `haiku` to
-`gpt-5.6-sol`. Both use a **272,000-token** Codex subscription window, with native
+`gpt-6-sol`. Both use a **272,000-token** Codex subscription window, with native
 automatic compaction at approximately **220,000 tokens** in Claude Code 2.1.263.
 The configuration uses `CLAUDE_CODE_MAX_CONTEXT_TOKENS=272000` for custom models
 and `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=87.3015873015873`; Claude reserves output space before
@@ -88,7 +88,7 @@ compaction service, retry loop, or replacement agent runner. Native Claude model
 keep their model windows; the percentage override also applies wherever Claude
 already enforces threshold-based compaction.
 
-In T3, select the registered **gpt-6-astra** or **gpt-5.6-sol** custom model for
+In T3, select the registered **gpt-6-astra** or **gpt-6-sol** custom model for
 the main agent. Exact legacy IDs such as `claude-sonnet-5` and
 `claude-haiku-4-5` remain proxy-compatible, but Claude gives those IDs its built-in
 context limits. The family selectors `sonnet` and `haiku` use the correct pins.

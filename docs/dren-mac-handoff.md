@@ -17,7 +17,7 @@ the same subscription quotas; the setup does not duplicate their allowances.
    | Selection | Actual model |
    |---|---|
    | Sonnet | GPT-6 Astra through Codex |
-   | Haiku | GPT-5.6 Sol through Codex |
+   | Haiku | GPT-6 Sol through Codex |
    | Opus 5 | Native Claude Opus 5 |
    | Fable 5.1 | Native Claude Fable 5.1 |
 

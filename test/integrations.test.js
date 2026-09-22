@@ -62,7 +62,7 @@ test("T3 integration updates only the Claude environment and protects the token"
   assert.equal(updated.providerInstances.claudeAgent.future, 42);
   assert.deepEqual(updated.providerInstances.claudeAgent.config, {
     futureConfig: true,
-    customModels: ["company-private-model", "gpt-6-astra", "gpt-5.6-sol", "claude-opus-5", "claude-fable-5-1"],
+    customModels: ["company-private-model", "gpt-6-astra", "gpt-6-sol", "claude-opus-5", "claude-fable-5-1"],
   });
   assert.deepEqual(updated.providerInstances.futureProvider, { keep: true });
   assert.equal(env.KEEP_ME.value, "yes");

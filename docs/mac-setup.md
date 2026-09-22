@@ -24,7 +24,7 @@ claudex run astra
 ```
 
 Complete the browser login using your own account with Codex model access.
-Sonnet routes to **GPT-6 Astra**; Haiku routes to **GPT-5.6 Sol**.
+Sonnet routes to **GPT-6 Astra**; Haiku routes to **GPT-6 Sol**.
 Use `claudex run sol` to choose Sol directly.
 
 For native **Opus 5** and **Fable 5.1**, add your own Claude login:

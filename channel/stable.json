@@ -73,6 +73,12 @@
       "upstream": "claude-fable-5-1",
       "alias": "claude-fable-5-1",
       "displayName": "Claude Fable 5.1"
+    },
+    "opus55": {
+      "upstream": "claude-opus-5-5",
+      "alias": "claude-opus-5-5",
+      "displayName": "Claude Opus 5.5",
+      "preview": true
     }
   },
   "compatibility": {

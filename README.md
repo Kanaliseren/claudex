@@ -43,7 +43,7 @@ claudex upgrade [--upstream | --binary PATH] [--check [--json]]
 claudex rollback
 claudex integrate <paseo|t3|all> [--path PATH] [--with-hub|--without-hub]
 claudex claude [CLAUDE OPTIONS...]
-claudex run <astra|sol|opus|fable> [--] [CLAUDE OPTIONS...]
+claudex run <astra|sol|opus|opus55|fable> [--] [CLAUDE OPTIONS...]
 claudex models [--json]
 claudex hub [--json]
 claudex status [--json]
@@ -63,7 +63,7 @@ claudex run opus
 claudex run sol -- --print "Explain this function" --output-format json
 ```
 
-`models` lists the proxy aliases and upstream models in the bundled tested channel;
+`models` lists the configured proxy aliases and upstream models, marking unvalidated preview entries;
 it does not contact a provider or verify login. `run` selects that model through
 Claude Code's `--model` flag using the upstream ID for one session and forwards the remaining arguments
 unchanged. An explicit later `--model` flag can override the named choice. It
@@ -234,3 +234,27 @@ Opus and Fable use Claude accounts; the Astra and Sol routes still use Codex.
 `--no-session-affinity` disables session binding. Claudex preserves these supported
 settings across setup and updates; arbitrary edits in the panel's YAML editor
 are not preserved by Claudex configuration regeneration.
+
+## Opus 5.5 preparation
+
+Claudex 0.7.4 registers `claude-opus-5-5` as a preview custom model for T3.
+`claudex run opus55` selects that exact native Anthropic model; `claudex run opus`
+continues to select Opus 5. No alias redirects Opus 5.5 to another model.
+
+```bash
+claudex integrate t3
+claudex doctor --live
+# Once the proxy advertises claude-opus-5-5:
+claudex run opus55
+```
+
+At preparation time, CLIProxyAPI's published model catalog did not include Opus
+5.5. A T3 update alone cannot add proxy routing support. The proxy normally
+refreshes its upstream catalog automatically; if a newer binary is needed, use
+`claudex update --upstream` during an idle window. Preview models do not block
+proxy upgrades or make `doctor` fail, but missing preview models produce a warning.
+A successful catalog check does not verify subscription access or native inference.
+After upstream support arrives, verify a real request before relying on the model.
+T3 can list the custom ID before it ships native model capabilities; use T3's
+updated model entry when available. The pinned proxy and tested compatibility
+matrix remain unchanged by this preparation.

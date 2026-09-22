@@ -79,11 +79,12 @@ export async function main(argv = process.argv.slice(2), io = console) {
       alias: model.alias,
       upstream: model.upstream,
       displayName: model.displayName ?? name,
+      preview: model.preview ?? false,
     }));
     if (parsed.options.json) io.log(JSON.stringify(models, null, 2));
     else {
-      io.log("Models in the bundled tested channel (availability requires local provider login):");
-      for (const model of models) io.log(`${model.name.padEnd(7)} ${model.alias} -> ${model.upstream}`);
+      io.log("Configured models (preview entries are not validated; availability requires proxy support and provider login):");
+      for (const model of models) io.log(`${model.name.padEnd(7)} ${model.alias} -> ${model.upstream}${model.preview ? " (preview; run doctor --live to check availability)" : ""}`);
     }
     return 0;
   }
@@ -210,7 +211,7 @@ Usage:
   claudex rollback
   claudex integrate <paseo|t3|all> [--path PATH] [--with-hub|--without-hub]
   claudex claude [--] [CLAUDE OPTIONS...]
-  claudex run <astra|sol|opus|fable> [--] [CLAUDE OPTIONS...]
+  claudex run <astra|sol|opus|opus55|fable> [--] [CLAUDE OPTIONS...]
   claudex models [--json]
   claudex hub [--json]
   claudex dashboard [--json]

@@ -80,10 +80,16 @@ export async function diagnose(paths, manifest, { live = false, fetchImpl = fetc
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const body = await response.json();
       const names = new Set((body?.data ?? []).map((model) => model.id));
-      const expected = ["astra", "sol", "opus", "fable"].map((model) => manifest.models[model].alias);
+      const expected = Object.values(manifest.models).filter((model) => !model.preview).map((model) => model.alias);
       const missing = expected.filter((model) => !names.has(model));
       if (missing.length > 0) throw new Error(`missing model aliases: ${missing.join(", ")}`);
       add("live proxy", "pass", `${body.data.length} models; OAuth aliases present`);
+      for (const model of Object.values(manifest.models).filter((model) => model.preview)) {
+        const available = names.has(model.alias);
+        add(model.displayName ?? model.alias, available ? "pass" : "warn", available
+          ? `${model.alias} is advertised by the proxy; native inference is not verified by this check`
+          : `${model.alias} is pending upstream proxy support; keep using an available model`);
+      }
     } catch (error) {
       add("live proxy", "fail", error.message);
     }

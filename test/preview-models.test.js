@@ -13,6 +13,7 @@ import { temporaryRoot } from "../test-support/helpers.js";
 
 test("preview model preparation preserves working routes and distinguishes catalog readiness", async (t) => {
   const manifest = await loadManifest();
+  manifest.models.opus55.preview = true;
   const root = await temporaryRoot(t);
   const paths = resolvePaths({ env: { CLAUDEX_HOME: root }, home: root });
   await writeProxyConfig(paths, manifest);

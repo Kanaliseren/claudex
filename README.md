@@ -181,11 +181,11 @@ Code releases are used immediately and retain the Tool Search override required
 for a custom proxy URL; `doctor` warns when a release has not yet been added to
 the validation matrix.
 
-The current channel uses official CLIProxyAPI `v7.2.151`. Its isolated Codex OAuth
-canary passed on this migration. Native Claude model names and gateway settings
-were checked against official documentation and upstream source; native Claude
-inference was not tested because the local subscription was exhausted. Prior
-Claude Code validation versions remain recorded in the manifest.
+The current channel uses official CLIProxyAPI `v7.3.13`. Isolated Codex OAuth
+requests passed for Astra and Sol. Native Opus 5.5 text, tool use, and a Claude
+Code 2.1.280 session passed without model overrides; Opus 5 remained usable.
+The upstream hybrid MCP tool-name regression tests also passed with the reported
+Supabase tool-name pattern. Prior validation versions remain in the manifest.
 
 The local quota-hub script and configuration, when already installed, remain
 independent of the package. Proxy upgrades restart an existing systemd quota hub
@@ -235,26 +235,24 @@ Opus and Fable use Claude accounts; the Astra and Sol routes still use Codex.
 settings across setup and updates; arbitrary edits in the panel's YAML editor
 are not preserved by Claudex configuration regeneration.
 
-## Opus 5.5 preparation
+## Opus 5.5
 
-Claudex 0.7.4 registers `claude-opus-5-5` as a preview custom model for T3.
-`claudex run opus55` selects that exact native Anthropic model; `claudex run opus`
-continues to select Opus 5. No alias redirects Opus 5.5 to another model.
+Claudex 0.7.5 bundles official CLIProxyAPI v7.3.13 with native Opus 5.5
+support and the fix for hybrid MCP tool names in Claude OAuth streaming responses.
+Claude Code 2.1.280 was checked with native Opus 5.5 text, tool use, and a CLI
+session. Codex Astra and Sol also passed isolated OAuth requests.
+
+`claudex run opus55` selects `claude-opus-5-5`; `claudex run opus` keeps Opus 5.
+`claudex integrate t3` registers both models without changing the default.
 
 ```bash
+claudex update
 claudex integrate t3
 claudex doctor --live
-# Once the proxy advertises claude-opus-5-5:
 claudex run opus55
 ```
 
-At preparation time, CLIProxyAPI's published model catalog did not include Opus
-5.5. A T3 update alone cannot add proxy routing support. The proxy normally
-refreshes its upstream catalog automatically; if a newer binary is needed, use
-`claudex update --upstream` during an idle window. Preview models do not block
-proxy upgrades or make `doctor` fail, but missing preview models produce a warning.
-A successful catalog check does not verify subscription access or native inference.
-After upstream support arrives, verify a real request before relying on the model.
-T3 can list the custom ID before it ships native model capabilities; use T3's
-updated model entry when available. The pinned proxy and tested compatibility
-matrix remain unchanged by this preparation.
+Updating regenerates the managed proxy configuration and removes the temporary
+Opus 5.5 alias/payload workaround. Native support no longer needs that override.
+Run updates during an idle window: activating a new proxy restarts the shared
+service and can interrupt requests from every connected user.

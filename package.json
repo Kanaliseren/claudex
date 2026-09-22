@@ -1,6 +1,6 @@
 {
   "name": "claudex",
-  "version": "0.7.4",
+  "version": "0.7.5",
   "description": "Run Claude Code through your local Codex OAuth session via CLIProxyAPI",
   "type": "module",
   "bin": {

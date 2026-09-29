@@ -4,21 +4,14 @@ import { readProxyKey, readProxySummary } from "./config.js";
 const identityPrompt =
   "This Claude Code session uses a local CLIProxyAPI OAuth bridge. Preserve Claude Code native tools, subagents, and workflow semantics.";
 
-// Use provider IDs: Claude's built-in Sonnet/Haiku IDs ignore custom context limits.
-// Both Codex subscription models use 272K. Claude reserves 20K for output before
-// applying the percentage, so target 220K out of the remaining 252K.
-function modelEnvironment(manifest) {
-  const capabilities = "effort,xhigh_effort,max_effort,thinking,adaptive_thinking,interleaved_thinking";
+function sonnetEnvironment(manifest) {
+  // Provider IDs avoid Sonnet's native 1M window. Apply the OAuth context cap
+  // to custom models; native Claude models ignore this setting.
   return {
-    ANTHROPIC_MODEL: manifest.models.astra.upstream,
-    ANTHROPIC_DEFAULT_SONNET_MODEL: manifest.models.astra.upstream,
-    ANTHROPIC_DEFAULT_SONNET_MODEL_NAME: "Sonnet (Astra)",
-    ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES: capabilities,
-    ANTHROPIC_DEFAULT_HAIKU_MODEL: manifest.models.sol.upstream,
-    ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME: "Haiku (Sol)",
-    ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES: capabilities,
-    CLAUDE_CODE_MAX_CONTEXT_TOKENS: "272000",
-    CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: String((220000 / 252000) * 100),
+    ANTHROPIC_DEFAULT_SONNET_MODEL: manifest.models.sol.upstream,
+    ANTHROPIC_DEFAULT_SONNET_MODEL_NAME: "Sonnet (GPT-6.1 Sol)",
+    ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES: "effort,xhigh_effort,max_effort,thinking,adaptive_thinking,interleaved_thinking",
+    CLAUDE_CODE_MAX_CONTEXT_TOKENS: String(manifest.models.sol.contextWindow),
   };
 }
 
@@ -40,7 +33,7 @@ export async function claudeEnvironment(paths, manifest, { enableToolSearch = tr
   return {
     ANTHROPIC_BASE_URL: `http://${summary.host}:${summary.port}`,
     ANTHROPIC_AUTH_TOKEN: proxyKey,
-    ...modelEnvironment(manifest),
+    ...sonnetEnvironment(manifest),
     ...(enableToolSearch ? { ENABLE_TOOL_SEARCH: "true" } : {}),
     API_TIMEOUT_MS: "3000000",
   };
@@ -86,7 +79,7 @@ case "$claude_help" in *--append-system-prompt*) set -- --append-system-prompt $
 case "$claude_help" in *--exclude-dynamic-system-prompt-sections*) set -- --exclude-dynamic-system-prompt-sections "$@";; esac
 export ANTHROPIC_BASE_URL=${shellQuote(baseUrl)}
 export ANTHROPIC_AUTH_TOKEN="$proxy_key"
-${Object.entries(modelEnvironment(manifest)).map(([name, value]) => `export ${name}=${shellQuote(value)}`).join("\n")}
+${Object.entries(sonnetEnvironment(manifest)).map(([name, value]) => `export ${name}=${shellQuote(value)}`).join("\n")}
 export ENABLE_TOOL_SEARCH=true
 export API_TIMEOUT_MS=3000000
 exec "$claude_binary" "$@"
@@ -103,7 +96,7 @@ for /f "tokens=2" %%K in ('findstr /r /c:"^  - " "${paths.proxyConfig}"') do if 
 if not defined proxy_key (echo No proxy key found in ${paths.proxyConfig} 1>&2 & exit /b 1)\r
 set "ANTHROPIC_BASE_URL=${baseUrl}"\r
 set "ANTHROPIC_AUTH_TOKEN=!proxy_key!"\r
-${Object.entries(modelEnvironment(manifest)).map(([name, value]) => `set "${name}=${value}"`).join("\r\n")}\r
+${Object.entries(sonnetEnvironment(manifest)).map(([name, value]) => `set "${name}=${value}"`).join("\r\n")}\r
 set "ENABLE_TOOL_SEARCH=true"\r
 set "API_TIMEOUT_MS=3000000"\r
 set "dynamic_args="\r

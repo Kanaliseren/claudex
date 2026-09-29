@@ -211,7 +211,7 @@ Usage:
   claudex rollback
   claudex integrate <paseo|t3|all> [--path PATH] [--with-hub|--without-hub]
   claudex claude [--] [CLAUDE OPTIONS...]
-  claudex run <astra|sol|opus|opus55|fable> [--] [CLAUDE OPTIONS...]
+  claudex run <sol|opus|opus55|fable> [--] [CLAUDE OPTIONS...]
   claudex models [--json]
   claudex hub [--json]
   claudex dashboard [--json]

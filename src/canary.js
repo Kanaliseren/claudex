@@ -29,11 +29,12 @@ export async function runIsolatedCanary(binary, paths, manifest, { fetchImpl = f
   let spawnError;
   child.once("error", (error) => (spawnError = error));
   try {
-    const expectedModels = hasOAuth ? [manifest.models.astra.alias, manifest.models.sol.alias] : [];
+    const sol = manifest.models.sol;
+    const expectedModels = hasOAuth ? [...new Set([sol.alias, ...(sol.aliases ?? [])])] : [];
     const models = await waitForModels(port, proxyKey, child, fetchImpl, () => spawnError, expectedModels);
     if (hasOAuth) {
       const names = extractModelNames(models);
-      for (const model of [manifest.models.astra.alias, manifest.models.sol.alias]) {
+      for (const model of expectedModels) {
         if (!names.has(model)) throw new Error(`canary model list is missing ${model}`);
       }
     }

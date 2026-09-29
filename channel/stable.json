@@ -51,18 +51,11 @@
     }
   },
   "models": {
-    "astra": {
-      "upstream": "gpt-6-astra",
-      "alias": "claude-sonnet-5",
-      "aliases": [
-        "claude-sonnet-5"
-      ],
-      "displayName": "Sonnet 5 (GPT-6 Astra)"
-    },
     "sol": {
-      "upstream": "gpt-6-sol",
-      "alias": "claude-haiku-4-5",
-      "displayName": "Haiku 4.5 (GPT-6 Sol)"
+      "upstream": "gpt-6.1-sol",
+      "alias": "claude-sonnet-5-5",
+      "displayName": "GPT-6.1 Sol",
+      "contextWindow": 272000
     },
     "opus": {
       "upstream": "claude-opus-5",

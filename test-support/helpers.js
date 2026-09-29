@@ -13,13 +13,12 @@ export function fixtureManifest() {
     schemaVersion: 1,
     proxy: { version: "v-test", upstreamVersion: "v-test", commit: "abc", repository: "example/repo", tag: "v-test", assets: {} },
     models: {
-      astra: {
-        upstream: "gpt-6-astra",
-        alias: "claude-sonnet-5",
-        aliases: ["claude-sonnet-5"],
-        displayName: "Astra",
+      sol: {
+        upstream: "gpt-6.1-sol",
+        alias: "claude-sonnet-5-5",
+        contextWindow: 272000,
+        displayName: "GPT-6.1 Sol",
       },
-      sol: { upstream: "gpt-6-sol", alias: "claude-haiku-4-5", displayName: "Sol" },
       opus: { upstream: "claude-opus-5", alias: "claude-opus-5", displayName: "Opus" },
       fable: { upstream: "claude-fable-5-1", alias: "claude-fable-5-1", displayName: "Fable" },
     },

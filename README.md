@@ -2,8 +2,8 @@
 
 Run Claude Code through local Codex and Claude OAuth sessions. Claudex safely installs
 and manages the CLIProxyAPI bridge used by Claude Code, Paseo, and T3 Code. Sonnet
-routes to GPT-6 Astra, Haiku routes to GPT-6 Sol, and Opus and Fable remain native
-Claude models with their native context windows.
+routes to GPT-6.1 Sol; all other models use their normal Claude routes, context
+windows, and compaction behavior.
 
 OAuth credentials are created locally on every machine. They are never bundled,
 uploaded, copied between users, or printed by this package.
@@ -21,7 +21,7 @@ while each Unix user has their own Claude Code and T3 client configuration.
 npm install -g github:Kanaliseren/claudex
 claudex setup
 claudex login codex
-claudex run astra
+claudex run sol
 ```
 
 For native Opus and Fable 5.1, also run `claudex login claude` with your own
@@ -43,7 +43,7 @@ claudex upgrade [--upstream | --binary PATH] [--check [--json]]
 claudex rollback
 claudex integrate <paseo|t3|all> [--path PATH] [--with-hub|--without-hub]
 claudex claude [CLAUDE OPTIONS...]
-claudex run <astra|sol|opus|opus55|fable> [--] [CLAUDE OPTIONS...]
+claudex run <sol|opus|opus55|fable> [--] [CLAUDE OPTIONS...]
 claudex models [--json]
 claudex hub [--json]
 claudex status [--json]
@@ -58,7 +58,7 @@ renaming Claudex does not invalidate local OAuth credentials.
 
 ```bash
 claudex models
-claudex run astra
+claudex run sol
 claudex run opus
 claudex run sol -- --print "Explain this function" --output-format json
 ```
@@ -68,36 +68,39 @@ it does not contact a provider or verify login. `run` selects that model through
 Claude Code's `--model` flag using the upstream ID for one session and forwards the remaining arguments
 unchanged. An explicit later `--model` flag can override the named choice. It
 preserves Claude Code's exit status and leaves installed routing and integrations
-unchanged. Astra and Sol use Codex OAuth; Opus and Fable use native Claude OAuth.
-`claudex claude` continues to launch with the existing defaults.
+unchanged. GPT-6.1 Sol uses Codex OAuth; Opus and Fable use native Claude OAuth.
+`claudex claude` launches with Claude Code's normal default model.
 
-### Context and reasoning
+### Context and compaction
 
-Claudex pins Claude Code's `sonnet` selector to `gpt-6-astra` and `haiku` to
-`gpt-6-sol`. Both use a **272,000-token** Codex subscription window, with native
-automatic compaction at approximately **220,000 tokens** in Claude Code 2.1.263.
-The configuration uses `CLAUDE_CODE_MAX_CONTEXT_TOKENS=272000` for custom models
-and `CLAUDE_AUTOCOMPACT_PCT_OVERRIDE=87.3015873015873`; Claude reserves output space before
-applying that percentage. It does not advertise a 1M window for either model.
+The only Codex alias is `claude-sonnet-5-5` → `gpt-6.1-sol`. Choose Sonnet in
+Claude Code or run `claudex run sol`. The `sonnet` selector uses the GPT provider
+ID, with effort and thinking capabilities enabled.
 
-Native Workflow calls such as `agent(prompt, { model: 'sonnet', effort: 'high' })`
-keep working. Claudex declares Claude's native effort and adaptive-thinking
-capabilities for both pins, so effort controls remain available. Claude owns
-subagent context, compaction, continuation, and Workflow results; Claudex adds no
-compaction service, retry loop, or replacement agent runner. Native Claude models
-keep their model windows; the percentage override also applies wherever Claude
-already enforces threshold-based compaction.
+The OAuth route has a configured **272,000-token context cap**. Claude Code
+2.1.284 automatically compacts around **239,000 tokens**, leaving roughly 33,000
+tokens for output and compaction. It resumes from the generated summary before
+reaching the cap. Using the provider ID avoids inheriting Sonnet's native 1M
+window; Codex context-limit errors alone do not trigger Claude's reactive
+compaction. Do not select `sonnet[1m]` for this route, as that explicitly requests
+a larger window.
 
-In T3, select the registered **gpt-6-astra** or **gpt-6-sol** custom model for
-the main agent. Exact legacy IDs such as `claude-sonnet-5` and
-`claude-haiku-4-5` remain proxy-compatible, but Claude gives those IDs its built-in
-context limits. The family selectors `sonnet` and `haiku` use the correct pins.
-After upgrading the package, regenerate the wrapper with `claudex update` (or
-reconnect a shared client), rerun `claudex integrate t3`, and start a new provider
-session. Running processes retain their original environment.
+Haiku, Opus, Fable, and the default model retain normal Claude behavior. The
+context setting applies to custom models; native Claude models retain their own
+windows. There is no global compaction percentage override.
 
-To verify native Workflow execution, effort forwarding, and automatic compaction
-against a local mock endpoint (no subscription requests), run:
+In T3, select `gpt-6.1-sol` for this route as the main model. Claude's `sonnet`
+selector uses the same settings in native subagents.
+
+After upgrading the package, run `claudex update` (or reconnect a shared client)
+and rerun `claudex integrate t3` or `claudex integrate paseo`. Integration clears
+legacy model and compaction overrides, removes retired GPT registrations, and
+migrates retired GPT defaults. Start a new provider session to pick up the
+refreshed environment.
+
+Verify Sonnet effort forwarding, proactive compaction, summary continuation,
+and a native parent with a Sonnet subagent against a local mock endpoint
+(no subscription requests):
 
 ```bash
 CLAUDEX_TEST_NATIVE=1 node --test test/native-context.test.js
@@ -181,8 +184,9 @@ Code releases are used immediately and retain the Tool Search override required
 for a custom proxy URL; `doctor` warns when a release has not yet been added to
 the validation matrix.
 
-The current channel uses official CLIProxyAPI `v7.3.13`. Isolated Codex OAuth
-requests passed for Astra and Sol. Native Opus 5.5 text, tool use, and a Claude
+The current channel uses official CLIProxyAPI `v7.3.13`. GPT-6.1 Sol text requests
+passed a live Codex OAuth check; local Claude Code 2.1.284 probes verify the configured context budget and
+proactive compaction. Native Opus 5.5 text, tool use, and a Claude
 Code 2.1.280 session passed without model overrides; Opus 5 remained usable.
 The upstream hybrid MCP tool-name regression tests also passed with the reported
 Supabase tool-name pattern. Prior validation versions remain in the manifest.
@@ -228,7 +232,7 @@ forwarded URL locally. Never paste the management key or OAuth callback into cha
 Round-robin distributes new sessions between eligible accounts. For a primary /
 backup arrangement, use `claudex configure --strategy fill-first`. Session
 bindings retain their account where possible, with failover when unavailable.
-Opus and Fable use Claude accounts; the Astra and Sol routes still use Codex.
+Opus and Fable use Claude accounts; the GPT-6.1 Sol route uses Codex.
 
 `claudex configure --no-dashboard` disables the dashboard and management API.
 `--no-session-affinity` disables session binding. Claudex preserves these supported
@@ -240,7 +244,7 @@ are not preserved by Claudex configuration regeneration.
 Claudex 0.7.5 bundles official CLIProxyAPI v7.3.13 with native Opus 5.5
 support and the fix for hybrid MCP tool names in Claude OAuth streaming responses.
 Claude Code 2.1.280 was checked with native Opus 5.5 text, tool use, and a CLI
-session. Codex Astra and Sol also passed isolated OAuth requests.
+session. The Codex OAuth canaries from that release predate the current model route.
 
 `claudex run opus55` selects `claude-opus-5-5`; `claudex run opus` keeps Opus 5.
 `claudex integrate t3` registers both models without changing the default.

@@ -31,7 +31,7 @@ package's compatibility matrix is repository evidence, not a new live test.
 | Concern | Kanaliseren/claudex | StringKe/claudex |
 | --- | --- | --- |
 | Main job | Manage a pinned CLIProxyAPI bridge and integrations | Implement a Rust translation proxy and multi-provider manager |
-| Existing model workflow | Codex-backed Sonnet/Haiku plus native Opus/Fable | Named provider profiles, model overrides, configurable Haiku/Sonnet/Opus slots |
+| Existing model workflow | Codex-backed Sonnet plus native Claude models | Named provider profiles, model overrides, configurable Haiku/Sonnet/Opus slots |
 | Integrations | Explicit T3 Code and Paseo configuration adapters | Claude Code launcher; no corresponding T3/Paseo adapters found |
 | Provider breadth | Package workflow exposes Codex and Claude OAuth | Anthropic, Chat Completions, Responses adapters; many endpoint and OAuth profiles |
 | Operations | User service, checksummed releases, candidate canary, rollback, doctor | Proxy daemon, configuration commands, TUI, GitHub self-update |
@@ -49,7 +49,7 @@ Sources: [our configuration](https://github.com/Kanaliseren/claudex/blob/231d19c
 StringKe launches a provider-specific endpoint at
 `http://127.0.0.1:13456/proxy/<profile>`. For a Claude subscription profile, its
 launcher deliberately bypasses that proxy and relies on Claude Code's own OAuth.
-Our wrapper instead uses one CLIProxyAPI endpoint, routes Sonnet/Haiku to Codex,
+Our wrapper instead uses one CLIProxyAPI endpoint, routes Sonnet to Codex,
 and preserves the native Claude models. StringKe's slot mappings change model
 names; they do not recreate our cross-provider routing contract. A replacement
 would need explicit compatibility work for that behavior and the application
@@ -102,7 +102,7 @@ Adapt the following ideas to our existing architecture:
 1. `claudex models [--json]`: display the bundled named routes and actual upstream
    models. This describes configuration; it does not claim that a provider login
    or live model request succeeds.
-2. `claudex run <sol|terra|opus|fable> [--] ...`: select a named model for one
+2. `claudex run <sol|opus|opus55|fable> [--] ...`: select a named model for one
    launch, keeping the existing proxy, defaults, and native Claude argument path.
 3. `claudex update --check [--json]`: compare the local installation with the
    executing package's bundled stable channel without installing or restarting

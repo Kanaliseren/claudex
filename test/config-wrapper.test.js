@@ -10,15 +10,13 @@ import { fixtureManifest, temporaryRoot } from "../test-support/helpers.js";
 
 const manifest = fixtureManifest();
 
-test("stable channel routes Sonnet and Haiku through Codex while Opus and Fable stay native", async () => {
+test("stable channel routes Sonnet through Codex while other Claude models stay native", async () => {
   const stable = JSON.parse(
     await readFile(fileURLToPath(new URL("../channel/stable.json", import.meta.url)), "utf8"),
   );
 
-  assert.deepEqual(stable.models.astra.aliases, ["claude-sonnet-5"]);
-  assert.equal(stable.models.astra.upstream, "gpt-6-astra");
-  assert.equal(stable.models.sol.alias, "claude-haiku-4-5");
-  assert.equal(stable.models.sol.upstream, "gpt-6-sol");
+  assert.equal(stable.models.sol.alias, "claude-sonnet-5-5");
+  assert.equal(stable.models.sol.upstream, "gpt-6.1-sol");
   assert.equal(stable.models.opus.upstream, "claude-opus-5");
   assert.equal(stable.models.fable.upstream, "claude-fable-5-1");
 });
@@ -33,8 +31,7 @@ test("setup config is loopback-only and preserves its generated key", async (t) 
   assert.equal(first.proxyKey, second.proxyKey);
   assert.equal(await readProxyKey(paths.proxyConfig), first.proxyKey);
   const config = await readFile(paths.proxyConfig, "utf8");
-  assert.match(config, /name: "gpt-6-astra"\n      alias: "claude-sonnet-5"/);
-  assert.match(config, /name: "gpt-6-sol"\n      alias: "claude-haiku-4-5"/);
+  assert.match(config, /name: "gpt-6.1-sol"\n      alias: "claude-sonnet-5-5"/);
   assert.match(config, /user-agent: "claude-cli\/2\.1\.257 \(external, cli\)"/);
   assert.doesNotMatch(config, /alias: "claude-opus-5"/);
   assert.doesNotMatch(config, /alias: "claude-fable-5-1"/);
@@ -93,13 +90,20 @@ test("Claude command keeps the proxy ToolSearch override on an untested future v
 
   assert.equal(await runClaude(paths, manifest, ["-p", "hello"], { runCommand }), 0);
   assert.equal(invocation.options.env.ENABLE_TOOL_SEARCH, "true");
-  assert.equal(invocation.options.env.ANTHROPIC_MODEL, "gpt-6-astra");
-  assert.equal(invocation.options.env.CLAUDE_CODE_MAX_CONTEXT_TOKENS, "272000");
-  assert.equal(invocation.options.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE, "87.3015873015873");
+  assert.deepEqual(invocation.options.env, {
+    ANTHROPIC_BASE_URL: "http://127.0.0.1:19224",
+    ANTHROPIC_AUTH_TOKEN: await readProxyKey(paths.proxyConfig),
+    ANTHROPIC_DEFAULT_SONNET_MODEL: "gpt-6.1-sol",
+    ANTHROPIC_DEFAULT_SONNET_MODEL_NAME: "Sonnet (GPT-6.1 Sol)",
+    ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES: "effort,xhigh_effort,max_effort,thinking,adaptive_thinking,interleaved_thinking",
+    CLAUDE_CODE_MAX_CONTEXT_TOKENS: "272000",
+    ENABLE_TOOL_SEARCH: "true",
+    API_TIMEOUT_MS: "3000000",
+  });
   assert.deepEqual(invocation.args.slice(-2), ["-p", "hello"]);
 });
 
-test("installed wrappers pass the same model budgets and capabilities as direct launches", { skip: process.platform === "win32" }, async (t) => {
+test("installed wrappers pass the same bridge environment as direct launches", { skip: process.platform === "win32" }, async (t) => {
   const root = await temporaryRoot(t);
   const paths = resolvePaths({ env: { CLAUDEX_HOME: root }, home: root });
   await writeProxyConfig(paths, manifest);
@@ -114,7 +118,7 @@ test("installed wrappers pass the same model budgets and capabilities as direct 
 
   await writeClaudeWrapper(paths, manifest, { platform: "win32" });
   const windows = await readFile(paths.wrapper, "utf8");
-  for (const name of Object.keys(expected).filter((name) => name.includes("MODEL") || name.includes("CONTEXT") || name.includes("COMPACT"))) {
+  for (const name of ["ANTHROPIC_BASE_URL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME", "ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES", "CLAUDE_CODE_MAX_CONTEXT_TOKENS"]) {
     assert.ok(windows.includes(`set "${name}=${expected[name]}"`), name);
   }
 });

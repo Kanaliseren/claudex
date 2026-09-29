@@ -49,7 +49,7 @@ test("isolated canary uses an access-only OAuth copy and exercises messages", { 
 
   assert.equal(result.passed, true);
   assert.equal(result.oauthTested, true);
-  assert.deepEqual(requestedModels, ["claude-sonnet-5", "claude-haiku-4-5"]);
+  assert.deepEqual(requestedModels, ["claude-sonnet-5-5"]);
 });
 
 test("upgrade canaries a distinct build and rollback restores the exact prior binary", { skip: process.platform === "win32" }, async (t) => {
@@ -109,9 +109,9 @@ test("upgrade refreshes model aliases without changing the proxy key or port", {
     ...manifest,
     models: {
       ...manifest.models,
-      astra: {
-        ...manifest.models.astra,
-        aliases: [...manifest.models.astra.aliases, "claude-sonnet-future"],
+      sol: {
+        ...manifest.models.sol,
+        aliases: ["claude-sonnet-future"],
       },
     },
   };
@@ -184,7 +184,7 @@ const port = Number(config.match(/^port: (\\d+)$/m)[1]);
 const server = createServer((request, response) => {
   response.setHeader("content-type", "application/json");
   if (request.url === "/v1/models") {
-    response.end(JSON.stringify({data:[{id:"claude-sonnet-5"},{id:"claude-haiku-4-5"}]}));
+    response.end(JSON.stringify({data:[{id:"claude-sonnet-5"},{id:"claude-sonnet-5-5"}]}));
   } else if (request.url === "/v1/messages") {
     let body = "";
     request.on("data", chunk => body += chunk);

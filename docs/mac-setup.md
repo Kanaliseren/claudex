@@ -20,14 +20,15 @@ echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
 export PATH="$HOME/.local/bin:$PATH"
 claudex setup
 claudex login codex
-claudex run astra
+claudex run sol
 ```
 
 Complete the browser login using your own account with Codex model access.
-Sonnet routes to **GPT-6 Astra**; Haiku routes to **GPT-6 Sol**.
-Use `claudex run sol` to choose Sol directly.
+Sonnet routes to **GPT-6.1 Sol**; the other models use their normal Claude routes.
+Use `claudex run sol` to choose GPT-6.1 Sol directly.
 
-For native **Opus 5** and **Fable 5.1**, add your own Claude login:
+For native Claude models, including **Haiku**, **Opus 5**, and **Fable 5.1**,
+add your own Claude login:
 
 ```bash
 claudex login claude
@@ -35,6 +36,8 @@ claudex run fable
 ```
 
 For T3 Code, run `claudex integrate t3`, then restart T3 Code.
+Select `gpt-6.1-sol` to use the Sonnet route as the main model; other selections
+use native Claude models.
 
 Update Claudex, Claude Code, and the official proxy later with:
 

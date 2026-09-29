@@ -1,9 +1,10 @@
 # Removing the CLIProxyAPI fork
 
-Reviewed 2026-09-05. Use official CLIProxyAPI **v7.2.151**, commit
+Historical audit from 2026-09-05 of official CLIProxyAPI **v7.2.151**, commit
 `5208aec703b5ce7e3445f6e9d91cc13b3e78003a`. The model-catalog gap that required
 the Claudex fork is fixed upstream; keeping a separate binary build is no longer
-necessary for the four configured model routes.
+necessary for the model routes configured at that time. The current channel
+and model routes are defined in [`../channel/stable.json`](../channel/stable.json).
 
 ## Evidence
 
@@ -13,14 +14,15 @@ tests the injection, and changes release workflows. It does not add a separate
 protocol translator. [Fork changes](https://github.com/Kanaliseren/CLIProxyAPI/commit/2af596f087d63d1bd144349744e1f812ce40d0d5).
 
 Both the official release's embedded catalog and the remote model catalog at
-`f1d6988816c14dd2634610fee1920407a5443f06` contain:
+`f1d6988816c14dd2634610fee1920407a5443f06` contain the following native models:
 
 | Claudex route | Upstream model | Catalog availability |
 | --- | --- | --- |
 | Fable | `claude-fable-5-1` | Claude |
 | Opus | `claude-opus-5` | Claude |
-| Sol | `gpt-6-sol` | Codex Team, Plus, Pro |
-| Terra | `gpt-5.6-terra` | Codex Free, Team, Plus, Pro |
+
+The current Codex route uses `gpt-6.1-sol`; this earlier catalog audit does not
+validate its availability.
 
 Sources: [embedded catalog](https://github.com/router-for-me/CLIProxyAPI/blob/5208aec703b5ce7e3445f6e9d91cc13b3e78003a/internal/registry/models/models.json),
 [remote catalog snapshot](https://github.com/router-for-me/models/blob/f1d6988816c14dd2634610fee1920407a5443f06/models.json).
@@ -48,7 +50,7 @@ The Claude-to-Codex translator has no equivalent Tool Search conversion: it
 removes `defer_loading`, converts non-web-search tool declarations to functions,
 and retains only text and images from mixed tool-result content arrays. A tool
 reference alongside text is consequently omitted. This source review does not
-establish end-to-end Tool Search compatibility for Sol/Terra sessions. The fork
+establish end-to-end Tool Search compatibility for Codex sessions. The fork
 does not patch this translator, so retaining it would not resolve the limitation.
 [Codex translator](https://github.com/router-for-me/CLIProxyAPI/blob/5208aec703b5ce7e3445f6e9d91cc13b3e78003a/internal/translator/codex/claude/codex_claude_request.go).
 

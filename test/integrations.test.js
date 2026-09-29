@@ -15,7 +15,7 @@ test("Paseo integration preserves unknown fields and creates a backup", async (t
   const configPath = join(root, "paseo.json");
   const original = {
     futureRoot: { keep: true },
-    agents: { providers: { claude: { order: 3, futureProviderField: [1, 2], env: { KEEP_ME: "yes" } } } },
+    agents: { providers: { claude: { order: 3, futureProviderField: [1, 2], env: { KEEP_ME: "yes", ANTHROPIC_DEFAULT_SONNET_MODEL: "gpt-6-astra", CLAUDE_CODE_MAX_CONTEXT_TOKENS: "272000" } } } },
   };
   await writeFile(configPath, JSON.stringify(original), { mode: 0o644 });
 
@@ -26,26 +26,39 @@ test("Paseo integration preserves unknown fields and creates a backup", async (t
   assert.deepEqual(backup, original);
   assert.deepEqual(updated.futureRoot, original.futureRoot);
   assert.deepEqual(updated.agents.providers.claude.futureProviderField, [1, 2]);
-  assert.equal(updated.agents.providers.claude.env.KEEP_ME, "yes");
+  assert.deepEqual(updated.agents.providers.claude.env, {
+    KEEP_ME: "yes", ANTHROPIC_BASE_URL: "http://127.0.0.1:18417",
+    ANTHROPIC_DEFAULT_SONNET_MODEL: "gpt-6.1-sol",
+    ANTHROPIC_DEFAULT_SONNET_MODEL_NAME: "Sonnet (GPT-6.1 Sol)",
+    ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES: "effort,xhigh_effort,max_effort,thinking,adaptive_thinking,interleaved_thinking",
+    CLAUDE_CODE_MAX_CONTEXT_TOKENS: "272000",
+    ENABLE_TOOL_SEARCH: "true", API_TIMEOUT_MS: "3000000",
+  });
   assert.equal(updated.agents.providers.claude.command, paths.wrapper);
   assert.equal(updated.agents.providers.claude.env.ANTHROPIC_BASE_URL, "http://127.0.0.1:18417");
   if (process.platform !== "win32") assert.equal((await stat(configPath)).mode & 0o777, 0o600);
 });
 
-test("T3 integration updates only the Claude environment and protects the token", async (t) => {
+test("T3 integration restores native models, clears legacy overrides, and protects the token", async (t) => {
   const root = await temporaryRoot(t);
   const manifest = fixtureManifest();
   const paths = resolvePaths({ env: { CLIPROXY_OAUTH_HOME: root }, home: root, platform: "linux" });
   const { proxyKey } = await writeProxyConfig(paths, manifest, { port: 18418 });
   const configPath = join(root, "t3.json");
   const original = {
+    defaultModelSelection: { instanceId: "claudeAgent", model: "gpt-6-astra" },
     providerInstances: {
       claudeAgent: {
         driver: "claudeAgent",
         future: 42,
-        config: { futureConfig: true, customModels: ["company-private-model"] },
+        config: { futureConfig: true, customModels: ["company-private-model", "gpt-6-astra", "gpt-6-sol", "gpt-6.1-sol"] },
         environment: [
           { name: "KEEP_ME", value: "yes", sensitive: false },
+          { name: "ANTHROPIC_MODEL", value: "gpt-6-astra", sensitive: false },
+          { name: "ANTHROPIC_DEFAULT_SONNET_MODEL", value: "gpt-6-astra", sensitive: false },
+          { name: "ANTHROPIC_DEFAULT_HAIKU_MODEL", value: "gpt-6-sol", sensitive: false },
+          { name: "CLAUDE_CODE_MAX_CONTEXT_TOKENS", value: "272000", sensitive: false },
+          { name: "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE", value: "87.3015873015873", sensitive: false },
           { name: "ANTHROPIC_AUTH_TOKEN", value: "old", sensitive: true, valueRedacted: true },
           { name: "ANTHROPIC_API_KEY", value: "stale", sensitive: true, valueRedacted: true },
         ],
@@ -60,12 +73,13 @@ test("T3 integration updates only the Claude environment and protects the token"
   const env = Object.fromEntries(updated.providerInstances.claudeAgent.environment.map((entry) => [entry.name, entry]));
 
   assert.equal(updated.providerInstances.claudeAgent.future, 42);
+  assert.deepEqual(updated.defaultModelSelection, { instanceId: "claudeAgent", model: "gpt-6.1-sol" });
   assert.deepEqual(updated.providerInstances.claudeAgent.config, {
     futureConfig: true,
-    customModels: ["company-private-model", "gpt-6-astra", "gpt-6-sol", "claude-opus-5", "claude-fable-5-1"],
+    customModels: ["company-private-model", "gpt-6.1-sol", "claude-opus-5", "claude-fable-5-1"],
   });
   assert.deepEqual(updated.providerInstances.futureProvider, { keep: true });
-  assert.equal(env.KEEP_ME.value, "yes");
+  assert.deepEqual(Object.keys(env).sort(), ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME", "ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES", "API_TIMEOUT_MS", "CLAUDE_CODE_MAX_CONTEXT_TOKENS", "ENABLE_TOOL_SEARCH", "KEEP_ME"]);
   assert.equal(env.ANTHROPIC_BASE_URL.value, "http://127.0.0.1:18418");
   assert.equal(env.ANTHROPIC_AUTH_TOKEN.value, proxyKey);
   assert.equal(env.ANTHROPIC_AUTH_TOKEN.sensitive, true);
@@ -74,13 +88,6 @@ test("T3 integration updates only the Claude environment and protects the token"
   assert.equal(env.ANTHROPIC_API_KEY.value, proxyKey);
   assert.equal(env.ANTHROPIC_API_KEY.sensitive, true);
   assert.equal(env.ANTHROPIC_API_KEY.valueRedacted, undefined);
-  assert.equal(env.ANTHROPIC_MODEL.value, manifest.models.astra.upstream);
-  assert.equal(env.ANTHROPIC_DEFAULT_SONNET_MODEL.value, manifest.models.astra.upstream);
-  assert.equal(env.ANTHROPIC_DEFAULT_HAIKU_MODEL.value, manifest.models.sol.upstream);
-  assert.equal(env.CLAUDE_CODE_MAX_CONTEXT_TOKENS.value, "272000");
-  assert.equal(env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE.value, "87.3015873015873");
-  assert.match(env.ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES.value, /adaptive_thinking/);
-  assert.match(env.ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES.value, /effort/);
   assert.equal(env.ENABLE_TOOL_SEARCH.value, "true");
   assert.equal(env.API_TIMEOUT_MS.value, "3000000");
   if (process.platform !== "win32") assert.equal((await stat(configPath)).mode & 0o777, 0o600);

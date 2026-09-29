@@ -4,6 +4,18 @@ import { atomicWrite, ensureDir, exists, readJson } from "./util.js";
 import { claudeEnvironment } from "./wrapper.js";
 import { readProxyOptions, readProxySummary, readQuotaHubConfig } from "./config.js";
 
+const legacyModelOverrides = new Set([
+  "ANTHROPIC_MODEL",
+  "ANTHROPIC_DEFAULT_SONNET_MODEL",
+  "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",
+  "ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES",
+  "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+  "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",
+  "ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES",
+  "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
+  "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE",
+]);
+
 export async function integrate(paths, manifest, target, { path, home = paths.userHome, includeHub = false, removeHub = false } = {}) {
   if (!new Set(["paseo", "t3", "all"]).has(target)) {
     throw new Error("integration target must be paseo, t3, or all");
@@ -34,7 +46,7 @@ export async function integratePaseo(paths, manifest, configPath) {
   const { ANTHROPIC_AUTH_TOKEN: _proxyKey, ...env } = await claudeEnvironment(paths, manifest);
   provider.command = paths.wrapper;
   provider.env = {
-    ...(provider.env ?? {}),
+    ...Object.fromEntries(Object.entries(provider.env ?? {}).filter(([name]) => !legacyModelOverrides.has(name))),
     ...env,
   };
   const backup = await backupAndWrite(paths, configPath, config, 0o600);
@@ -69,10 +81,17 @@ export async function integrateT3(paths, manifest, configPath, { includeHub = fa
   }
   const env = await claudeEnvironment(paths, manifest);
   const models = Object.values(manifest.models).map((model) => model.upstream);
+  const retiredModels = new Set(["gpt-6-astra", "gpt-6-sol"]);
+  const customModels = (provider.config?.customModels ?? []).filter((model) => !retiredModels.has(model));
   provider.config = {
     ...(provider.config ?? {}),
-    customModels: [...new Set([...(provider.config?.customModels ?? []), ...models])],
+    customModels: [...new Set([...customModels, ...models])],
   };
+  if (config.defaultModelSelection?.instanceId === "claudeAgent" && retiredModels.has(config.defaultModelSelection.model)) {
+    config.defaultModelSelection.model = config.defaultModelSelection.model === "gpt-6-astra"
+      ? manifest.models.sol.upstream : "claude-haiku-4-5-20251001";
+  }
+  provider.environment = provider.environment.filter(({ name }) => !legacyModelOverrides.has(name));
   for (const [name, value] of Object.entries(env)) {
     if (name === "ANTHROPIC_AUTH_TOKEN") continue;
     provider.environment = upsertEnvironment(provider.environment, name, value, false);

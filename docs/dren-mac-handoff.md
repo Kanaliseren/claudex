@@ -16,8 +16,8 @@ the same subscription quotas; the setup does not duplicate their allowances.
 
    | Selection | Actual model |
    |---|---|
-   | Sonnet | GPT-6 Astra through Codex |
-   | Haiku | GPT-6 Sol through Codex |
+   | Haiku | Native Claude Haiku |
+   | gpt-6.1-sol (Sonnet route) | GPT-6.1 Sol through Codex |
    | Opus 5 | Native Claude Opus 5 |
    | Fable 5.1 | Native Claude Fable 5.1 |
 
@@ -29,11 +29,11 @@ For terminal use, open Terminal on your Mac:
 ```bash
 ssh dren@riz-server
 claudex models
-claudex run astra
+claudex run sol
 ```
 
-Other sessions: `claudex run sol`, `claudex run opus`, or `claudex run fable`.
-`claudex claude` uses the Astra default. Use these commands for the bridge;
+Other sessions: `claudex run opus`, `claudex run opus55`, or `claudex run fable`.
+`claudex claude` uses Claude Code's normal default. Use these commands for the bridge;
 the plain `claude` command starts the original Claude CLI directly.
 
 ## Dashboard

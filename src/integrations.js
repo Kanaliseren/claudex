@@ -81,7 +81,7 @@ export async function integrateT3(paths, manifest, configPath, { includeHub = fa
   }
   const env = await claudeEnvironment(paths, manifest);
   const models = Object.values(manifest.models).map((model) => model.upstream);
-  const retiredModels = new Set(["gpt-6-astra", "gpt-6-sol"]);
+  const retiredModels = new Set(["gpt-6-astra", "gpt-6-sol", "gpt-5.6-sol"]);
   const customModels = (provider.config?.customModels ?? []).filter((model) => !retiredModels.has(model));
   provider.config = {
     ...(provider.config ?? {}),

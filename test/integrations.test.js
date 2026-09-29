@@ -51,7 +51,7 @@ test("T3 integration restores native models, clears legacy overrides, and protec
       claudeAgent: {
         driver: "claudeAgent",
         future: 42,
-        config: { futureConfig: true, customModels: ["company-private-model", "gpt-6-astra", "gpt-6-sol", "gpt-6.1-sol"] },
+        config: { futureConfig: true, customModels: ["company-private-model", "gpt-6-astra", "gpt-6-sol", "gpt-5.6-sol", "gpt-6.1-sol"] },
         environment: [
           { name: "KEEP_ME", value: "yes", sensitive: false },
           { name: "ANTHROPIC_MODEL", value: "gpt-6-astra", sensitive: false },

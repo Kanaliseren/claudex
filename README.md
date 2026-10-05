@@ -78,7 +78,7 @@ Claude Code or run `claudex run sol`. The `sonnet` selector uses the GPT provide
 ID, with effort and thinking capabilities enabled.
 
 The OAuth route has a configured **272,000-token context cap**. Claude Code
-2.1.284 automatically compacts around **239,000 tokens**, leaving roughly 33,000
+2.1.289 automatically compacts around **239,000 tokens**, leaving roughly 33,000
 tokens for output and compaction. It resumes from the generated summary before
 reaching the cap. Using the provider ID avoids inheriting Sonnet's native 1M
 window; Codex context-limit errors alone do not trigger Claude's reactive
@@ -184,12 +184,13 @@ Code releases are used immediately and retain the Tool Search override required
 for a custom proxy URL; `doctor` warns when a release has not yet been added to
 the validation matrix.
 
-The current channel uses official CLIProxyAPI `v7.3.13`. GPT-6.1 Sol text requests
-passed a live Codex OAuth check; local Claude Code 2.1.284 probes verify the configured context budget and
-proactive compaction. Native Opus 5.5 text, tool use, and a Claude
-Code 2.1.280 session passed without model overrides; Opus 5 remained usable.
-The upstream hybrid MCP tool-name regression tests also passed with the reported
-Supabase tool-name pattern. Prior validation versions remain in the manifest.
+Claudex 0.7.7 bundles official CLIProxyAPI `v8.0.15`, supporting the current v8
+management dashboard and the v0 API used by existing clients. GPT-6.1 Sol and
+native Opus 5.5 passed live text and Read-tool sessions through Claude Code
+2.1.289. Local probes verify the configured context budget, proactive compaction,
+summary continuation, and native parent/Sonnet subagent behavior. All five
+platform archives and executable checksums are verified. Prior validation
+versions remain in the manifest.
 
 The local quota-hub script and configuration, when already installed, remain
 independent of the package. Proxy upgrades restart an existing systemd quota hub
@@ -241,10 +242,8 @@ are not preserved by Claudex configuration regeneration.
 
 ## Opus 5.5
 
-Claudex 0.7.5 bundles official CLIProxyAPI v7.3.13 with native Opus 5.5
-support and the fix for hybrid MCP tool names in Claude OAuth streaming responses.
-Claude Code 2.1.280 was checked with native Opus 5.5 text, tool use, and a CLI
-session. The Codex OAuth canaries from that release predate the current model route.
+Opus 5.5 uses native Claude OAuth through CLIProxyAPI, without a model alias or
+payload workaround.
 
 `claudex run opus55` selects `claude-opus-5-5`; `claudex run opus` keeps Opus 5.
 `claudex integrate t3` registers both models without changing the default.

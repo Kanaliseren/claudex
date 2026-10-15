@@ -45,7 +45,7 @@ claudex integrate <paseo|t3|all> [--path PATH] [--with-hub|--without-hub]
 claudex claude [CLAUDE OPTIONS...]
 claudex run <sol|opus|opus55|fable> [--] [CLAUDE OPTIONS...]
 claudex models [--json]
-claudex hub [--json]
+claudex hub [--install [--port PORT]] [--json]
 claudex status [--json]
 ```
 
@@ -78,7 +78,7 @@ Claude Code or run `claudex run sol`. The `sonnet` selector uses the GPT provide
 ID, with effort and thinking capabilities enabled.
 
 The OAuth route has a configured **272,000-token context cap**. Claude Code
-2.1.289 automatically compacts around **239,000 tokens**, leaving roughly 33,000
+2.1.300 automatically compacts around **239,000 tokens**, leaving roughly 33,000
 tokens for output and compaction. It resumes from the generated summary before
 reaching the cap. Using the provider ID avoids inheriting Sonnet's native 1M
 window; Codex context-limit errors alone do not trigger Claude's reactive
@@ -152,9 +152,13 @@ npx --yes github:Kanaliseren/claudex update
 
 `upgrade` remains an alias for existing scripts.
 
-`update` and `upgrade` first update Claude Code through its native latest channel,
-then stage the newest compatibility-tested CLIProxyAPI build bundled with Claudex.
+`update` and `upgrade` stage the newest compatibility-tested CLIProxyAPI build bundled with Claudex.
 `integrate t3` also registers native manifest models that T3 has not bundled yet.
+
+Claudex never installs, updates or pins Claude Code and leaves its native
+auto-updater untouched. Update it through that auto-updater, T3's provider update,
+`claude update`, or `claude install <version>`. Newer releases than the tested
+matrix keep working; `doctor` only notes that they are untested.
 
 Without `--upstream`, each package release pins exact binaries and checksums. `upgrade` stages the
 candidate, checks required capabilities, runs an isolated OAuth canary when a
@@ -184,21 +188,36 @@ Code releases are used immediately and retain the Tool Search override required
 for a custom proxy URL; `doctor` warns when a release has not yet been added to
 the validation matrix.
 
-Claudex 0.7.7 bundles official CLIProxyAPI `v8.0.15`, supporting the current v8
+Claudex 0.8.0 bundles official CLIProxyAPI `v8.0.28`, supporting the current v8
 management dashboard and the v0 API used by existing clients. GPT-6.1 Sol and
 native Opus 5.5 passed live text and Read-tool sessions through Claude Code
-2.1.289. Local probes verify the configured context budget, proactive compaction,
+2.1.300. Local probes verify the configured context budget, proactive compaction,
 summary continuation, and native parent/Sonnet subagent behavior. All five
 platform archives and executable checksums are verified. Prior validation
 versions remain in the manifest.
 
-The local quota-hub script and configuration, when already installed, remain
-independent of the package. Proxy upgrades restart an existing systemd quota hub
-with its proxy and preserve its files and T3 settings.
-`hub` shows the existing hub URL without printing its management key.
-`integrate t3 --with-hub` connects the official management API when the dashboard
-is enabled, or the legacy quota hub otherwise; `--without-hub` removes only
-its T3 usage source. Neither option provisions a new hub server.
+On Linux, `claudex hub --install` installs a small loopback adapter for the stock
+management API and backs up an existing legacy hub. It requests full Claude usage
+first, preserving model-specific limits (including Fable), extra usage and other
+provider fields. Only when the usage endpoint returns 429 does it fall back to
+normal model response headers. Both the 5-hour and weekly observations must be
+at most 15 minutes old and their windows must not have reset. It preserves
+observation times. If recent headers are unavailable, one tiny Haiku request
+(one output token) obtains fresh quota headers for that specific account.
+This consumes a small amount of subscription quota;
+concurrent refreshes share the pending probe. Completed responses are not cached
+in the hub. Header observations may omit extra
+usage, reset grants and some model-specific windows; grant queries and reset
+operations always reach the original provider. Reset counts and model-specific
+limits can still be unavailable while their provider endpoint is throttled;
+the adapter cannot reconstruct missing fields from general quota headers.
+
+`claudex dashboard` and `integrate t3 --with-hub` use an installed adapter; without
+one, the official management API or existing legacy hub remains available.
+`hub` shows its URL without printing the management key. Proxy upgrades restart
+an existing systemd hub without rewriting its files. Rerun `hub --install` after
+updating Claudex to refresh the adapter. `--without-hub` removes only T3's usage
+source. Remote dashboards must forward the adapter port to use it.
 
 Maintainers: follow [`docs/updating.md`](docs/updating.md) when promoting a proxy
 or Claude Code release.
@@ -239,6 +258,30 @@ Opus and Fable use Claude accounts; the GPT-6.1 Sol route uses Codex.
 `--no-session-affinity` disables session binding. Claudex preserves these supported
 settings across setup and updates; arbitrary edits in the panel's YAML editor
 are not preserved by Claudex configuration regeneration.
+
+### Use the quota that expires first
+
+With two or more accounts from the same provider (Claude or Codex), the installed
+quota adapter (`claudex hub --install`) routes new work to the account whose weekly
+window resets soonest, because that quota is lost first if unused. Every five
+minutes it reads each account's weekly reset and sets CLIProxyAPI's built-in
+per-account `priority` (the highest priority is used first). Accounts without a
+running weekly window come after accounts with one, followed by exhausted
+accounts and accounts whose credentials are rejected. The proxy's own cooldown handles 5-hour and weekly 429s by
+failing over to the next priority until the limit resets.
+
+Reset times come from recent model-response headers when available, otherwise
+from the provider usage endpoint, reused for up to 30 minutes. Lower-priority
+accounts sit idle and have no recent headers, so when the usage endpoint is
+throttled and an account's reset is not yet known, the adapter sends the same
+one-output-token Haiku probe the dashboard uses, once until that reset is known.
+Probing an unused account starts its weekly window. If an account's usage is
+still unreadable, or no reset is known, that provider's priorities stay
+unchanged until a later pass. With session
+affinity, existing conversations stay on their account until the binding expires
+(one hour) or that account fails; new conversations use the new order. The adapter
+owns `priority` for these providers, so manual priorities are replaced. Set
+`"expiryRouting": false` in `quota-hub.json` and restart the hub to disable it.
 
 ## Opus 5.5
 

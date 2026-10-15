@@ -2,7 +2,8 @@ import { copyFile, readFile, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { atomicWrite, ensureDir, exists, readJson } from "./util.js";
 import { claudeEnvironment } from "./wrapper.js";
-import { readProxyOptions, readProxySummary, readQuotaHubConfig } from "./config.js";
+import { readProxyOptions, readQuotaHubConfig } from "./config.js";
+import { managementEndpoint } from "./hub.js";
 
 const legacyModelOverrides = new Set([
   "ANTHROPIC_MODEL",
@@ -115,13 +116,13 @@ export async function integrateT3(paths, manifest, configPath, { includeHub = fa
     }
     if (includeHub) {
       const options = await readProxyOptions(paths.proxyConfig);
-      // Current T3 reads auth-files and api-call from the official management API.
+      const endpoint = options.dashboard ? await managementEndpoint(paths) : undefined;
       const hub = options.dashboard
-        ? { ...(await readProxySummary(paths.proxyConfig)), managementKey: (await readFile(paths.dashboardKey, "utf8")).trim() }
+        ? { url: endpoint.url, managementKey: (await readFile(paths.dashboardKey, "utf8")).trim() }
         : await readQuotaHubConfig(paths.hubConfig);
       if (!hub.managementKey) throw new Error("missing dashboard management key");
       config.usageLimitSources = { ...sources, claudex: {
-        kind: "cliproxy", label: "Claudex", url: `http://${hub.host}:${hub.port}`, managementKey: hub.managementKey, enabled: true,
+        kind: "cliproxy", label: "Claudex", url: hub.url ?? `http://${hub.host}:${hub.port}`, managementKey: hub.managementKey, enabled: true,
       } };
     } else if (sources) delete sources.claudex;
   }

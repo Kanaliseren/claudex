@@ -2,13 +2,14 @@ import { loadManifest } from "./manifest.js";
 import { resolvePaths } from "./paths.js";
 import { diagnose, statusSummary } from "./doctor.js";
 import { integrate } from "./integrations.js";
-import { login, rollback, setup, updateClaudeCode, upgrade } from "./lifecycle.js";
+import { login, rollback, setup, upgrade } from "./lifecycle.js";
 import { runClaude } from "./wrapper.js";
 import { checkUpdate } from "./update-check.js";
 import { prepareUpstreamManifest } from "./promotion.js";
 import { readQuotaHubConfig } from "./config.js";
 import { configure, dashboardSummary } from "./settings.js";
 import { assertOwnedProxy, connectSharedFile } from "./shared.js";
+import { installQuotaHub } from "./hub.js";
 
 export async function main(argv = process.argv.slice(2), io = console) {
   const [command = "help", ...tail] = argv;
@@ -91,6 +92,12 @@ export async function main(argv = process.argv.slice(2), io = console) {
 
   if (command === "hub") {
     rejectPositionals(parsed, command);
+    if (parsed.options.install) {
+      const result = await installQuotaHub(paths, manifest, { port: numberOption(parsed.options.port, "port") });
+      if (parsed.options.json) io.log(JSON.stringify(result, null, 2));
+      else io.log(`Quota adapter: ${result.url} (backup: ${result.backup})\nNext: claudex integrate t3 --with-hub`);
+      return 0;
+    }
     const hub = await readQuotaHubConfig(paths.hubConfig);
     const summary = { url: `http://${hub.host}:${hub.port}` };
     if (parsed.options.json) io.log(JSON.stringify(summary, null, 2));
@@ -167,8 +174,6 @@ export async function main(argv = process.argv.slice(2), io = console) {
       }
       return 0;
     }
-    const claude = await updateClaudeCode();
-    io.log(`Claude Code is current (${claude.version}).`);
     const result = await upgrade(paths, candidate, { binary: parsed.options.binary, requireOAuth: Boolean(parsed.options.upstream) });
     if (!result.changed) io.log(`Already on ${result.release.version} (${result.release.sha256.slice(0, 12)}).`);
     else {
@@ -213,7 +218,7 @@ Usage:
   claudex claude [--] [CLAUDE OPTIONS...]
   claudex run <sol|opus|opus55|fable> [--] [CLAUDE OPTIONS...]
   claudex models [--json]
-  claudex hub [--json]
+  claudex hub [--install [--port PORT]] [--json]
   claudex dashboard [--json]
   claudex configure [--dashboard|--no-dashboard] [--session-affinity|--no-session-affinity] [--strategy round-robin|fill-first]
   claudex status [--json]
@@ -229,6 +234,7 @@ function parseArguments(args) {
   const positionals = [];
   const boolean = new Map([
     ["--no-service", "noService"],
+    ["--install", "install"],
     ["--device", "device"],
     ["--json", "json"],
     ["--live", "live"],

@@ -116,27 +116,6 @@ export async function rollback(paths, options = {}) {
   });
 }
 
-export async function updateClaudeCode({
-  runCommand = run,
-  binary = process.env.CLAUDE_CODE_BINARY || "claude",
-} = {}) {
-  const update = await runCommand(binary, ["update"], {
-    allowFailure: true,
-    timeout: 10 * 60_000,
-  });
-  if (update.code !== 0) {
-    throw new Error(`Claude Code update failed: ${update.stderr.trim() || `exit ${update.code}`}`);
-  }
-  const versionResult = await runCommand(binary, ["--version"], {
-    allowFailure: true,
-    timeout: 15_000,
-  });
-  if (versionResult.code !== 0) throw new Error("Claude Code update completed but its version could not be read");
-  const version = `${versionResult.stdout} ${versionResult.stderr}`.match(/\d+\.\d+\.\d+(?:[-+][\w.-]+)?/)?.[0];
-  if (!version) throw new Error("Claude Code update completed but returned an unknown version");
-  return { version };
-}
-
 export async function login(paths, { provider = "codex", device = false, runCommand = run } = {}) {
   await assertOwnedProxy(paths);
   if (!(await exists(paths.currentBinary)) || !(await exists(paths.proxyConfig))) {

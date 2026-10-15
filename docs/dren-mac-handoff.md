@@ -71,7 +71,9 @@ claudex doctor --live
 ```
 
 The shared proxy's owner updates the backend using `claudex update --upstream`
-under **nand**. Shared clients reject `setup`, proxy `update`, `configure`, and
+under **nand**, then refreshes the quota adapter with `claudex hub --install`.
+The adapter routes every connected user's new conversations to the shared account
+whose weekly quota resets first. Shared clients reject `setup`, proxy `update`, `configure`, and
 CLI provider logins to avoid starting or managing another proxy.
 
 ## Connecting another Unix user on this server

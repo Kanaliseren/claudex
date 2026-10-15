@@ -4,6 +4,7 @@ import { readProxyKey, readProxyOptions, readProxySummary, writeProxyConfig } fr
 import { restartService } from "./service.js";
 import { atomicWrite, exists, sleep, withFileLock } from "./util.js";
 import { assertOwnedProxy } from "./shared.js";
+import { managementEndpoint } from "./hub.js";
 
 export async function configure(paths, manifest, options = {}) {
   await assertOwnedProxy(paths);
@@ -51,10 +52,10 @@ async function waitForProxy(paths, port, fetchImpl) {
 
 export async function dashboardSummary(paths) {
   const options = await readProxyOptions(paths.proxyConfig);
-  const { host, port } = await readProxySummary(paths.proxyConfig);
+  const endpoint = await managementEndpoint(paths);
   return {
     enabled: options.dashboard,
-    url: `http://${host}:${port}/management.html`,
+    url: `${endpoint.url}/management.html`,
     keyFile: paths.dashboardKey,
     strategy: options.strategy,
     sessionAffinity: options.sessionAffinity,

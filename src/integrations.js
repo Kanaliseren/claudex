@@ -18,40 +18,8 @@ const legacyModelOverrides = new Set([
 ]);
 
 export async function integrate(paths, manifest, target, { path, home = paths.userHome, includeHub = false, removeHub = false } = {}) {
-  if (!new Set(["paseo", "t3", "all"]).has(target)) {
-    throw new Error("integration target must be paseo, t3, or all");
-  }
-  if (includeHub && removeHub) throw new Error("--with-hub and --without-hub cannot be used together");
-  const results = [];
-  if (target === "paseo" || target === "all") {
-    results.push(await integratePaseo(paths, manifest, path ?? join(home, ".paseo", "config.json")));
-  }
-  if (target === "t3" || target === "all") {
-    if (target === "all" && path) throw new Error("--path cannot be used with integration target all");
-    results.push(
-      await integrateT3(paths, manifest, path ?? join(home, ".t3", "userdata", "settings.json"), { includeHub, removeHub }),
-    );
-  }
-  return results;
-}
-
-export async function integratePaseo(paths, manifest, configPath) {
-  const config = await loadExistingConfig(configPath, "Paseo");
-  const provider = config?.agents?.providers?.claude;
-  if (!provider || typeof provider !== "object" || Array.isArray(provider)) {
-    throw new Error("unsupported Paseo config: agents.providers.claude is missing");
-  }
-  if (provider.env !== undefined && (!provider.env || typeof provider.env !== "object" || Array.isArray(provider.env))) {
-    throw new Error("unsupported Paseo config: Claude provider env must be an object");
-  }
-  const { ANTHROPIC_AUTH_TOKEN: _proxyKey, ...env } = await claudeEnvironment(paths, manifest);
-  provider.command = paths.wrapper;
-  provider.env = {
-    ...Object.fromEntries(Object.entries(provider.env ?? {}).filter(([name]) => !legacyModelOverrides.has(name))),
-    ...env,
-  };
-  const backup = await backupAndWrite(paths, configPath, config, 0o600);
-  return { target: "paseo", path: configPath, backup };
+  if (target !== "t3") throw new Error("integration target must be t3");
+  return [await integrateT3(paths, manifest, path ?? join(home, ".t3", "userdata", "settings.json"), { includeHub, removeHub })];
 }
 
 export async function integrateT3(paths, manifest, configPath, { includeHub = false, removeHub = false } = {}) {

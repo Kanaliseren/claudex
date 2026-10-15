@@ -192,7 +192,7 @@ export async function main(argv = process.argv.slice(2), io = console) {
 
   if (command === "integrate") {
     const [target, ...extra] = parsed.positionals;
-    if (!target || extra.length > 0) throw new Error("usage: claudex integrate <paseo|t3|all> [--path PATH]");
+    if (!target || extra.length > 0) throw new Error("usage: claudex integrate t3 [--path PATH]");
     const results = await integrate(paths, manifest, target, {
       path: parsed.options.path, includeHub: Boolean(parsed.options.withHub), removeHub: Boolean(parsed.options.withoutHub),
     });
@@ -214,7 +214,7 @@ Usage:
   claudex update [--upstream | --binary PATH] [--check [--json]]
   claudex upgrade [--upstream | --binary PATH] [--check [--json]]
   claudex rollback
-  claudex integrate <paseo|t3|all> [--path PATH] [--with-hub|--without-hub]
+  claudex integrate t3 [--path PATH] [--with-hub|--without-hub]
   claudex claude [--] [CLAUDE OPTIONS...]
   claudex run <sol|opus|opus55|fable> [--] [CLAUDE OPTIONS...]
   claudex models [--json]

@@ -3,41 +3,9 @@ import assert from "node:assert/strict";
 import { readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { writeProxyConfig } from "../src/config.js";
-import { integratePaseo, integrateT3 } from "../src/integrations.js";
+import { integrate, integrateT3 } from "../src/integrations.js";
 import { resolvePaths } from "../src/paths.js";
 import { fixtureManifest, temporaryRoot } from "../test-support/helpers.js";
-
-test("Paseo integration preserves unknown fields and creates a backup", async (t) => {
-  const root = await temporaryRoot(t);
-  const manifest = fixtureManifest();
-  const paths = resolvePaths({ env: { CLIPROXY_OAUTH_HOME: root }, home: root, platform: "linux" });
-  await writeProxyConfig(paths, manifest, { port: 18417 });
-  const configPath = join(root, "paseo.json");
-  const original = {
-    futureRoot: { keep: true },
-    agents: { providers: { claude: { order: 3, futureProviderField: [1, 2], env: { KEEP_ME: "yes", ANTHROPIC_DEFAULT_SONNET_MODEL: "gpt-6-astra", CLAUDE_CODE_MAX_CONTEXT_TOKENS: "272000" } } } },
-  };
-  await writeFile(configPath, JSON.stringify(original), { mode: 0o644 });
-
-  const result = await integratePaseo(paths, manifest, configPath);
-  const updated = JSON.parse(await readFile(configPath, "utf8"));
-  const backup = JSON.parse(await readFile(result.backup, "utf8"));
-
-  assert.deepEqual(backup, original);
-  assert.deepEqual(updated.futureRoot, original.futureRoot);
-  assert.deepEqual(updated.agents.providers.claude.futureProviderField, [1, 2]);
-  assert.deepEqual(updated.agents.providers.claude.env, {
-    KEEP_ME: "yes", ANTHROPIC_BASE_URL: "http://127.0.0.1:18417",
-    ANTHROPIC_DEFAULT_SONNET_MODEL: "gpt-6.1-sol",
-    ANTHROPIC_DEFAULT_SONNET_MODEL_NAME: "Sonnet (GPT-6.1 Sol)",
-    ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES: "effort,xhigh_effort,max_effort,thinking,adaptive_thinking,interleaved_thinking",
-    CLAUDE_CODE_MAX_CONTEXT_TOKENS: "272000",
-    ENABLE_TOOL_SEARCH: "true", API_TIMEOUT_MS: "3000000",
-  });
-  assert.equal(updated.agents.providers.claude.command, paths.wrapper);
-  assert.equal(updated.agents.providers.claude.env.ANTHROPIC_BASE_URL, "http://127.0.0.1:18417");
-  if (process.platform !== "win32") assert.equal((await stat(configPath)).mode & 0o777, 0o600);
-});
 
 test("T3 integration restores native models, clears legacy overrides, and protects the token", async (t) => {
   const root = await temporaryRoot(t);
@@ -46,6 +14,7 @@ test("T3 integration restores native models, clears legacy overrides, and protec
   const { proxyKey } = await writeProxyConfig(paths, manifest, { port: 18418 });
   const configPath = join(root, "t3.json");
   const original = {
+    retiredIntegration: { enabled: true },
     defaultModelSelection: { instanceId: "claudeAgent", model: "gpt-6-astra" },
     providerInstances: {
       claudeAgent: {
@@ -68,10 +37,13 @@ test("T3 integration restores native models, clears legacy overrides, and protec
   };
   await writeFile(configPath, JSON.stringify(original), { mode: 0o644 });
 
-  await integrateT3(paths, manifest, configPath);
+  const result = await integrate(paths, manifest, "t3", { path: configPath });
   const updated = JSON.parse(await readFile(configPath, "utf8"));
   const env = Object.fromEntries(updated.providerInstances.claudeAgent.environment.map((entry) => [entry.name, entry]));
 
+  assert.deepEqual(result.map(({ target, path }) => ({ target, path })), [{ target: "t3", path: configPath }]);
+  assert.deepEqual(JSON.parse(await readFile(result[0].backup, "utf8")), original);
+  assert.deepEqual(updated.retiredIntegration, original.retiredIntegration);
   assert.equal(updated.providerInstances.claudeAgent.future, 42);
   assert.deepEqual(updated.defaultModelSelection, { instanceId: "claudeAgent", model: "gpt-6.1-sol" });
   assert.deepEqual(updated.providerInstances.claudeAgent.config, {
@@ -156,5 +128,11 @@ test("legacy T3 settings gain a Claude instance without changing other providers
     assert.equal(entry.sensitive, true);
     assert.equal(entry.valueRedacted, undefined);
     assert.ok(entry.value.length > 0);
+  }
+});
+
+test("integration dispatch rejects unsupported targets before accessing configuration", async () => {
+  for (const target of ["all", "retired", undefined]) {
+    await assert.rejects(integrate({}, {}, target), /integration target must be t3/);
   }
 });

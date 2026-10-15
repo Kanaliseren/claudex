@@ -10,8 +10,8 @@ dependency rather than expanding our own translator.
 [open compaction fix](https://github.com/StringKe/claudex/pull/6),
 [open Responses fix](https://github.com/StringKe/claudex/pull/9).
 
-Reviewed 2026-09-05. Keep **Kanaliseren/claudex** for the existing Codex + Claude,
-T3 Code, and Paseo workflow. Borrow the convenient model-selection and read-only
+Reviewed 2026-09-05. Keep **Kanaliseren/claudex** for the existing Codex + Claude
+and T3 Code workflow. Borrow the convenient model-selection and read-only
 update-check commands. **StringKe/claudex** offers broader provider management,
 but replacing this package with it would be a migration to a different proxy,
 configuration format, authentication store, and integration model.
@@ -32,7 +32,7 @@ package's compatibility matrix is repository evidence, not a new live test.
 | --- | --- | --- |
 | Main job | Manage a pinned CLIProxyAPI bridge and integrations | Implement a Rust translation proxy and multi-provider manager |
 | Existing model workflow | Codex-backed Sonnet plus native Claude models | Named provider profiles, model overrides, configurable Haiku/Sonnet/Opus slots |
-| Integrations | Explicit T3 Code and Paseo configuration adapters | Claude Code launcher; no corresponding T3/Paseo adapters found |
+| Integrations | Explicit T3 Code configuration adapter | Claude Code launcher; no corresponding T3 adapter found |
 | Provider breadth | Package workflow exposes Codex and Claude OAuth | Anthropic, Chat Completions, Responses adapters; many endpoint and OAuth profiles |
 | Operations | User service, checksummed releases, candidate canary, rollback, doctor | Proxy daemon, configuration commands, TUI, GitHub self-update |
 | Best fit | Preserve the current focused workflow | Explore many API providers and local model endpoints |

@@ -10,6 +10,10 @@ inspect the candidate without changing the installation. The canary never copies
 Claude credentials. Native Claude verification is separate and must be reported
 as unavailable when a subscription cannot be used.
 
+After installing a new Claudex package on Linux, run `claudex hub --install` to
+refresh the quota adapter script, including expiry routing. It keeps the existing
+`quota-hub.json` settings and backs up the previous script, unit and configuration.
+
 To refresh the package's bundled channel:
 
 1. Run `npm run promote:proxy -- latest` (or an exact `vX.Y.Z` tag). This reads

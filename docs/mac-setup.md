@@ -39,7 +39,8 @@ For T3 Code, run `claudex integrate t3`, then restart T3 Code.
 Select `gpt-6.1-sol` to use the Sonnet route as the main model; other selections
 use native Claude models.
 
-Update Claudex, Claude Code, and the official proxy later with:
+Claude Code keeps itself current through its native auto-updater. Update Claudex
+and the official proxy later with:
 
 ```bash
 npm install -g --prefix "$HOME/.local" github:Kanaliseren/claudex

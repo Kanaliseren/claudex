@@ -4,7 +4,7 @@ import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { runIsolatedCanary } from "../src/canary.js";
 import { readProxyKey } from "../src/config.js";
-import { login, rollback, setup, updateClaudeCode, upgrade } from "../src/lifecycle.js";
+import { login, rollback, setup, upgrade } from "../src/lifecycle.js";
 import { resolvePaths } from "../src/paths.js";
 import { loadState } from "../src/state.js";
 import { fixtureManifest, temporaryRoot } from "../test-support/helpers.js";
@@ -124,20 +124,6 @@ test("upgrade refreshes model aliases without changing the proxy key or port", {
   assert.match(config, /^port: 19417$/m);
   assert.match(config, /alias: "claude-sonnet-future"/);
   assert.equal(await readProxyKey(paths.proxyConfig), originalKey);
-});
-
-test("update refreshes Claude Code through its native latest channel", async () => {
-  const calls = [];
-  const runCommand = async (binary, args) => {
-    calls.push([binary, ...args]);
-    if (args[0] === "update") return { code: 0, stdout: "updated", stderr: "" };
-    return { code: 0, stdout: "99.1.2 (Claude Code)", stderr: "" };
-  };
-
-  const result = await updateClaudeCode({ runCommand });
-
-  assert.equal(result.version, "99.1.2");
-  assert.deepEqual(calls, [["claude", "update"], ["claude", "--version"]]);
 });
 
 test("login selects Codex or native Claude OAuth explicitly", async (t) => {

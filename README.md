@@ -1,7 +1,7 @@
 # Claudex
 
 Run Claude Code through local Codex and Claude OAuth sessions. Claudex safely installs
-and manages the CLIProxyAPI bridge used by Claude Code, Paseo, and T3 Code. Sonnet
+and manages the CLIProxyAPI bridge used by Claude Code and T3 Code. Sonnet
 routes to GPT-6.1 Sol; all other models use their normal Claude routes, context
 windows, and compaction behavior.
 
@@ -41,7 +41,7 @@ claudex doctor [--json] [--live]
 claudex update [--upstream | --binary PATH] [--check [--json]]
 claudex upgrade [--upstream | --binary PATH] [--check [--json]]
 claudex rollback
-claudex integrate <paseo|t3|all> [--path PATH] [--with-hub|--without-hub]
+claudex integrate t3 [--path PATH] [--with-hub|--without-hub]
 claudex claude [CLAUDE OPTIONS...]
 claudex run <sol|opus|opus55|fable> [--] [CLAUDE OPTIONS...]
 claudex models [--json]
@@ -93,7 +93,7 @@ In T3, select `gpt-6.1-sol` for this route as the main model. Claude's `sonnet`
 selector uses the same settings in native subagents.
 
 After upgrading the package, run `claudex update` (or reconnect a shared client)
-and rerun `claudex integrate t3` or `claudex integrate paseo`. Integration clears
+and rerun `claudex integrate t3`. Integration clears
 legacy model and compaction overrides, removes retired GPT registrations, and
 migrates retired GPT defaults. Start a new provider session to pick up the
 refreshed environment.

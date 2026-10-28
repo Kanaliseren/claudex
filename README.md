@@ -71,8 +71,8 @@ unchanged. All configured models use native Claude OAuth.
 
 ### After upgrading
 
-Run `claudex update` (or reconnect a shared client) and rerun
-`claudex integrate t3`. Integration clears legacy model and compaction overrides,
+Run `claudex update` (shared clients skip this) and rerun
+`claudex integrate t3`, which also refreshes the terminal wrapper. Integration clears legacy model and compaction overrides,
 removes retired GPT registrations, and migrates retired GPT defaults to their
 native Claude replacements. Start a new provider session to pick up the
 refreshed environment.

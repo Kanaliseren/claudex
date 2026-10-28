@@ -1,7 +1,7 @@
 import { copyFile, readFile, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { atomicWrite, ensureDir, exists, readJson } from "./util.js";
-import { claudeEnvironment } from "./wrapper.js";
+import { claudeEnvironment, writeClaudeWrapper } from "./wrapper.js";
 import { readProxyOptions, readQuotaHubConfig } from "./config.js";
 import { managementEndpoint } from "./hub.js";
 
@@ -101,6 +101,8 @@ export async function integrateT3(paths, manifest, configPath, { includeHub = fa
     } else if (sources) delete sources.claudex;
   }
   const backup = await backupAndWrite(paths, configPath, config, 0o600);
+  // Shared clients cannot run `update`, so integration also refreshes the terminal wrapper.
+  await writeClaudeWrapper(paths);
   return { target: "t3", path: configPath, backup };
 }
 

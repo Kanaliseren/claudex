@@ -10,4 +10,4 @@ const path = fileURLToPath(new URL("../channel/stable.json", import.meta.url));
 const manifest = JSON.parse(await readFile(path, "utf8"));
 const candidate = await prepareUpstreamManifest(manifest, tag);
 await atomicWrite(path, `${JSON.stringify(candidate, null, 2)}\n`, 0o644);
-console.log(`Prepared official ${candidate.proxy.version}; run checks and the local Codex canary before activation.`);
+console.log(`Prepared official ${candidate.proxy.version}; run checks before activation; `claudex update` canaries it locally.`);

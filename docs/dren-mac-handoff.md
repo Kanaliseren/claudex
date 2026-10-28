@@ -61,7 +61,7 @@ no new login. Never paste a key or callback URL into chat.
 
 ## Updates
 
-In the `dren` SSH session, update the client and refresh its T3 integration:
+In the `dren` SSH session, update the client and refresh its T3 integration and terminal wrapper:
 
 ```bash
 npm install -g --prefix "$HOME/.local" github:Kanaliseren/claudex

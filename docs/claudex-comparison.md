@@ -100,7 +100,7 @@ Adapt the following ideas to our existing architecture:
 1. `claudex models [--json]`: display the bundled named routes and actual upstream
    models. This describes configuration; it does not claim that a provider login
    or live model request succeeds.
-2. `claudex run <sol|opus|opus55|fable> [--] ...`: select a named model for one
+2. `claudex run <opus|opus55|fable> [--] ...`: select a named model for one
    launch, keeping the existing proxy, defaults, and native Claude argument path.
 3. `claudex update --check [--json]`: compare the local installation with the
    executing package's bundled stable channel without installing or restarting

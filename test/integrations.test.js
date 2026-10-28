@@ -45,13 +45,13 @@ test("T3 integration restores native models, clears legacy overrides, and protec
   assert.deepEqual(JSON.parse(await readFile(result[0].backup, "utf8")), original);
   assert.deepEqual(updated.retiredIntegration, original.retiredIntegration);
   assert.equal(updated.providerInstances.claudeAgent.future, 42);
-  assert.deepEqual(updated.defaultModelSelection, { instanceId: "claudeAgent", model: "gpt-6.1-sol" });
+  assert.deepEqual(updated.defaultModelSelection, { instanceId: "claudeAgent", model: "claude-sonnet-5-5" });
   assert.deepEqual(updated.providerInstances.claudeAgent.config, {
     futureConfig: true,
-    customModels: ["company-private-model", "gpt-6.1-sol", "claude-opus-5", "claude-fable-5-1"],
+    customModels: ["company-private-model", "claude-opus-5", "claude-fable-5-1"],
   });
   assert.deepEqual(updated.providerInstances.futureProvider, { keep: true });
-  assert.deepEqual(Object.keys(env).sort(), ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME", "ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES", "API_TIMEOUT_MS", "CLAUDE_CODE_MAX_CONTEXT_TOKENS", "ENABLE_TOOL_SEARCH", "KEEP_ME"]);
+  assert.deepEqual(Object.keys(env).sort(), ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "API_TIMEOUT_MS", "ENABLE_TOOL_SEARCH", "KEEP_ME"]);
   assert.equal(env.ANTHROPIC_BASE_URL.value, "http://127.0.0.1:18418");
   assert.equal(env.ANTHROPIC_AUTH_TOKEN.value, proxyKey);
   assert.equal(env.ANTHROPIC_AUTH_TOKEN.sensitive, true);

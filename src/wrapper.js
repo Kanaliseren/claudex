@@ -4,42 +4,30 @@ import { readProxyKey, readProxySummary } from "./config.js";
 const identityPrompt =
   "This Claude Code session uses a local CLIProxyAPI OAuth bridge. Preserve Claude Code native tools, subagents, and workflow semantics.";
 
-function sonnetEnvironment(manifest) {
-  // Provider IDs avoid Sonnet's native 1M window. Apply the OAuth context cap
-  // to custom models; native Claude models ignore this setting.
-  return {
-    ANTHROPIC_DEFAULT_SONNET_MODEL: manifest.models.sol.upstream,
-    ANTHROPIC_DEFAULT_SONNET_MODEL_NAME: "Sonnet (GPT-6.1 Sol)",
-    ANTHROPIC_DEFAULT_SONNET_MODEL_SUPPORTED_CAPABILITIES: "effort,xhigh_effort,max_effort,thinking,adaptive_thinking,interleaved_thinking",
-    CLAUDE_CODE_MAX_CONTEXT_TOKENS: String(manifest.models.sol.contextWindow),
-  };
-}
-
-export async function writeClaudeWrapper(paths, manifest, { platform = process.platform } = {}) {
+export async function writeClaudeWrapper(paths, { platform = process.platform } = {}) {
   const summary = await readProxySummary(paths.proxyConfig);
   if (platform === "win32") {
-    const script = renderWindowsWrapper(paths, manifest, `http://${summary.host}:${summary.port}`);
+    const script = renderWindowsWrapper(paths, `http://${summary.host}:${summary.port}`);
     await atomicWrite(paths.wrapper, script, 0o700);
     return paths.wrapper;
   }
-  const script = renderUnixWrapper(paths, manifest, `http://${summary.host}:${summary.port}`);
+  const script = renderUnixWrapper(paths, `http://${summary.host}:${summary.port}`);
   await atomicWrite(paths.wrapper, script, 0o700);
   return paths.wrapper;
 }
 
-export async function claudeEnvironment(paths, manifest, { enableToolSearch = true } = {}) {
+export async function claudeEnvironment(paths, { enableToolSearch = true } = {}) {
   const summary = await readProxySummary(paths.proxyConfig);
   const proxyKey = await readProxyKey(paths.proxyConfig);
   return {
     ANTHROPIC_BASE_URL: `http://${summary.host}:${summary.port}`,
     ANTHROPIC_AUTH_TOKEN: proxyKey,
-    ...sonnetEnvironment(manifest),
     ...(enableToolSearch ? { ENABLE_TOOL_SEARCH: "true" } : {}),
     API_TIMEOUT_MS: "3000000",
   };
 }
 
-export async function runClaude(paths, manifest, args, { runCommand = run } = {}) {
+export async function runClaude(paths, args, { runCommand = run } = {}) {
   const binary = process.env.CLAUDE_CODE_BINARY || "claude";
   const help = await runCommand(binary, ["--help"], { allowFailure: true, timeout: 15_000 });
   if (help.code !== 0) throw new Error(`Claude Code is unavailable: ${help.stderr.trim()}`);
@@ -52,7 +40,7 @@ export async function runClaude(paths, manifest, args, { runCommand = run } = {}
     dynamicArgs.push("--append-system-prompt", identityPrompt);
   }
   const result = await runCommand(binary, [...dynamicArgs, ...args], {
-    env: await claudeEnvironment(paths, manifest),
+    env: await claudeEnvironment(paths),
     stdio: "inherit",
     timeout: 0,
     allowFailure: true,
@@ -60,7 +48,7 @@ export async function runClaude(paths, manifest, args, { runCommand = run } = {}
   return result.code;
 }
 
-function renderUnixWrapper(paths, manifest, baseUrl) {
+function renderUnixWrapper(paths, baseUrl) {
   return `#!/bin/sh
 set -eu
 claude_binary=\${CLAUDE_CODE_BINARY:-claude}
@@ -79,14 +67,13 @@ case "$claude_help" in *--append-system-prompt*) set -- --append-system-prompt $
 case "$claude_help" in *--exclude-dynamic-system-prompt-sections*) set -- --exclude-dynamic-system-prompt-sections "$@";; esac
 export ANTHROPIC_BASE_URL=${shellQuote(baseUrl)}
 export ANTHROPIC_AUTH_TOKEN="$proxy_key"
-${Object.entries(sonnetEnvironment(manifest)).map(([name, value]) => `export ${name}=${shellQuote(value)}`).join("\n")}
 export ENABLE_TOOL_SEARCH=true
 export API_TIMEOUT_MS=3000000
 exec "$claude_binary" "$@"
 `;
 }
 
-function renderWindowsWrapper(paths, manifest, baseUrl) {
+function renderWindowsWrapper(paths, baseUrl) {
   return `@echo off\r
 setlocal EnableExtensions EnableDelayedExpansion\r
 set "claude_binary=%CLAUDE_CODE_BINARY%"\r
@@ -96,7 +83,6 @@ for /f "tokens=2" %%K in ('findstr /r /c:"^  - " "${paths.proxyConfig}"') do if 
 if not defined proxy_key (echo No proxy key found in ${paths.proxyConfig} 1>&2 & exit /b 1)\r
 set "ANTHROPIC_BASE_URL=${baseUrl}"\r
 set "ANTHROPIC_AUTH_TOKEN=!proxy_key!"\r
-${Object.entries(sonnetEnvironment(manifest)).map(([name, value]) => `set "${name}=${value}"`).join("\r\n")}\r
 set "ENABLE_TOOL_SEARCH=true"\r
 set "API_TIMEOUT_MS=3000000"\r
 set "dynamic_args="\r

@@ -32,7 +32,7 @@ export async function main(argv = process.argv.slice(2), io = console) {
     }
     args = args[0] === "--" ? args.slice(1) : args;
     if (model) args = ["--model", model, ...args];
-    return runClaude(paths, manifest, args);
+    return runClaude(paths, args);
   }
   const parsed = parseArguments(tail);
   if (parsed.options.check && command !== "update" && command !== "upgrade") {
@@ -116,7 +116,7 @@ export async function main(argv = process.argv.slice(2), io = console) {
     io.log(`Config: ${result.config}`);
     io.log(`Claude wrapper: ${result.wrapper}`);
     if (!result.service.installed) io.log("Service was not installed; start the proxy before live use.");
-    io.log("Next: claudex login codex && claudex login claude");
+    io.log("Next: claudex login claude");
     return 0;
   }
 
@@ -170,15 +170,15 @@ export async function main(argv = process.argv.slice(2), io = console) {
         io.log(`${parsed.options.upstream ? "Official upstream release" : "Bundled tested channel"}: ${report.channelVersion}`);
         io.log(`Binary: ${report.binaryMatchesChannel ? "matches" : "missing or differs"}; config: ${report.configMatchesChannel ? "matches" : "missing or differs"}.`);
         io.log(report.action === "none" ? "Proxy binary and config match this channel." : `Next: claudex ${report.action}${parsed.options.upstream && report.action === "update" ? " --upstream" : ""}`);
-        io.log("Read-only check; Claude Code updates and newer Claudex packages are not checked. No provider canary has run.");
+        io.log("Read-only check; Claude Code updates and newer Claudex packages are not checked. No canary has run.");
       }
       return 0;
     }
-    const result = await upgrade(paths, candidate, { binary: parsed.options.binary, requireOAuth: Boolean(parsed.options.upstream) });
+    const result = await upgrade(paths, candidate, { binary: parsed.options.binary });
     if (!result.changed) io.log(`Already on ${result.release.version} (${result.release.sha256.slice(0, 12)}).`);
     else {
       io.log(`Upgraded to ${result.release.version} (${result.release.sha256.slice(0, 12)}).`);
-      io.log(`Isolated canary: passed${result.canary.oauthTested ? " with local OAuth" : " (no local OAuth credential)"}.`);
+      io.log("Isolated canary: passed.");
     }
     return 0;
   }
@@ -204,7 +204,7 @@ export async function main(argv = process.argv.slice(2), io = console) {
   throw new Error(`unknown command: ${command}\n\n${helpText}`);
 }
 
-const helpText = `claudex — route Claude Code through local Codex and Claude OAuth sessions
+const helpText = `claudex — route Claude Code through local Claude and Codex OAuth sessions
 
 Usage:
   claudex setup [--binary PATH] [--port PORT] [--no-service]
@@ -216,7 +216,7 @@ Usage:
   claudex rollback
   claudex integrate t3 [--path PATH] [--with-hub|--without-hub]
   claudex claude [--] [CLAUDE OPTIONS...]
-  claudex run <sol|opus|opus55|fable> [--] [CLAUDE OPTIONS...]
+  claudex run <opus|opus55|fable> [--] [CLAUDE OPTIONS...]
   claudex models [--json]
   claudex hub [--install [--port PORT]] [--json]
   claudex dashboard [--json]

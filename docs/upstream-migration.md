@@ -21,9 +21,6 @@ Both the official release's embedded catalog and the remote model catalog at
 | Fable | `claude-fable-5-1` | Claude |
 | Opus | `claude-opus-5` | Claude |
 
-The current Codex route uses `gpt-6.1-sol`; this earlier catalog audit does not
-validate its availability.
-
 Sources: [embedded catalog](https://github.com/router-for-me/CLIProxyAPI/blob/5208aec703b5ce7e3445f6e9d91cc13b3e78003a/internal/registry/models/models.json),
 [remote catalog snapshot](https://github.com/router-for-me/models/blob/f1d6988816c14dd2634610fee1920407a5443f06/models.json).
 Catalog presence establishes routing metadata, not account entitlement or a

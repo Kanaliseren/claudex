@@ -19,25 +19,15 @@ npm install -g --prefix "$HOME/.local" github:Kanaliseren/claudex
 echo 'export PATH="$HOME/.local/bin:$PATH"' >> ~/.zshrc
 export PATH="$HOME/.local/bin:$PATH"
 claudex setup
-claudex login codex
-claudex run sol
-```
-
-Complete the browser login using your own account with Codex model access.
-Sonnet routes to **GPT-6.1 Sol**; the other models use their normal Claude routes.
-Use `claudex run sol` to choose GPT-6.1 Sol directly.
-
-For native Claude models, including **Haiku**, **Opus 5**, and **Fable 5.1**,
-add your own Claude login:
-
-```bash
 claudex login claude
 claudex run fable
 ```
 
+Complete the browser login using your own Claude account. Every model, including
+**Haiku**, **Sonnet**, **Opus 5**, and **Fable 5.1**, uses its native Claude route.
+Run `claudex login codex` to add a Codex account as well.
+
 For T3 Code, run `claudex integrate t3`, then restart T3 Code.
-Select `gpt-6.1-sol` to use the Sonnet route as the main model; other selections
-use native Claude models.
 
 Claude Code keeps itself current through its native auto-updater. Update Claudex
 and the official proxy later with:

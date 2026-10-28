@@ -55,7 +55,7 @@ export async function diagnose(paths, manifest, { live = false, fetchImpl = fetc
     const credentials = await credentialSummary(paths.authDir);
     add(
       "oauth",
-      credentials.codex > 0 && credentials.claude > 0 ? "pass" : "warn",
+      credentials.claude > 0 ? "pass" : "warn",
       `local credentials: Codex ${credentials.codex}, Claude ${credentials.claude}`,
     );
     for (const insecure of credentials.insecure) add("oauth permissions", "fail", insecure);

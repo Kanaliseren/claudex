@@ -17,6 +17,14 @@ const legacyModelOverrides = new Set([
   "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE",
 ]);
 
+// Former GPT routes, mapped to the native Claude model that replaced each selector.
+const retiredModels = new Map([
+  ["gpt-6.1-sol", "claude-sonnet-5-5"],
+  ["gpt-6-astra", "claude-sonnet-5-5"],
+  ["gpt-6-sol", "claude-haiku-4-5-20251001"],
+  ["gpt-5.6-sol", "claude-haiku-4-5-20251001"],
+]);
+
 export async function integrate(paths, manifest, target, { path, home = paths.userHome, includeHub = false, removeHub = false } = {}) {
   if (target !== "t3") throw new Error("integration target must be t3");
   return [await integrateT3(paths, manifest, path ?? join(home, ".t3", "userdata", "settings.json"), { includeHub, removeHub })];
@@ -48,18 +56,16 @@ export async function integrateT3(paths, manifest, configPath, { includeHub = fa
   if (provider.config?.customModels !== undefined && (!Array.isArray(provider.config.customModels) || provider.config.customModels.some((model) => typeof model !== "string" || !model))) {
     throw new Error("unsupported T3 Code config: Claude customModels must contain model names");
   }
-  const env = await claudeEnvironment(paths, manifest);
+  const env = await claudeEnvironment(paths);
   const models = Object.values(manifest.models).map((model) => model.upstream);
-  const retiredModels = new Set(["gpt-6-astra", "gpt-6-sol", "gpt-5.6-sol"]);
   const customModels = (provider.config?.customModels ?? []).filter((model) => !retiredModels.has(model));
   provider.config = {
     ...(provider.config ?? {}),
     customModels: [...new Set([...customModels, ...models])],
   };
-  if (config.defaultModelSelection?.instanceId === "claudeAgent" && retiredModels.has(config.defaultModelSelection.model)) {
-    config.defaultModelSelection.model = config.defaultModelSelection.model === "gpt-6-astra"
-      ? manifest.models.sol.upstream : "claude-haiku-4-5-20251001";
-  }
+  const replacement = config.defaultModelSelection?.instanceId === "claudeAgent"
+    ? retiredModels.get(config.defaultModelSelection.model) : undefined;
+  if (replacement) config.defaultModelSelection.model = replacement;
   provider.environment = provider.environment.filter(({ name }) => !legacyModelOverrides.has(name));
   for (const [name, value] of Object.entries(env)) {
     if (name === "ANTHROPIC_AUTH_TOKEN") continue;

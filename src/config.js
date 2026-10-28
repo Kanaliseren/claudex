@@ -15,9 +15,7 @@ export async function writeProxyConfig(paths, manifest, { port = 8317, ...overri
 export function renderProxyConfig({ paths, manifest, port, proxyKey, dashboard = false, managementKey = "", sessionAffinity = false, strategy = "round-robin" }) {
   if (dashboard && !managementKey) throw new Error("dashboard requires a management key");
   if (!["round-robin", "fill-first"].includes(strategy)) throw new Error("unsupported routing strategy");
-  const sol = manifest.models.sol;
   const claudeCodeVersion = manifest.compatibility.claudeCode.tested.at(-1);
-  const aliases = modelAliases(sol);
   return `# Managed by Claudex. Edit through the package, not in place.
 host: "127.0.0.1"
 port: ${Number(port)}
@@ -49,22 +47,7 @@ routing:
 
 claude-header-defaults:
   user-agent: ${yamlString(`claude-cli/${claudeCodeVersion} (external, cli)`)}
-
-oauth-excluded-models:
-  claude:
-${aliases.map((alias) => `    - ${yamlString(alias)}`).join("\n")}
-
-oauth-model-alias:
-  codex:
-${aliases.map((alias) => `    - name: ${yamlString(sol.upstream)}
-      alias: ${yamlString(alias)}
-      fork: true
-      display-name: ${yamlString(sol.displayName)}`).join("\n")}
 `;
-}
-
-function modelAliases(model) {
-  return [...new Set([model.alias, ...(model.aliases ?? [])])];
 }
 
 export async function readProxyKey(path) {

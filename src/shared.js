@@ -32,7 +32,7 @@ export async function connectShared(paths, manifest, connection, { fetchImpl = f
       paths, manifest, port, proxyKey, dashboard: true, managementKey, sessionAffinity: true,
     }), 0o600);
     await atomicWrite(paths.dashboardKey, `${managementKey}\n`, 0o600);
-    await writeClaudeWrapper(paths, manifest);
+    await writeClaudeWrapper(paths);
     return { url, wrapper: paths.wrapper };
   });
 }

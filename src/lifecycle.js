@@ -15,7 +15,7 @@ export async function setup(paths, manifest, options = {}) {
     const release = await stageRelease(paths, manifest, options);
     await writeProxyConfig(paths, manifest, { port: options.port ?? 8317 });
     await activateRelease(paths, release);
-    await writeClaudeWrapper(paths, manifest);
+    await writeClaudeWrapper(paths);
     const oldState = await loadState(paths);
     const state = transitionState(oldState, release);
     await saveState(paths, state);
@@ -56,7 +56,7 @@ export async function upgrade(paths, manifest, options = {}) {
         await writeProxyConfig(paths, manifest, { port });
         const configChanged = (await readFile(paths.proxyConfig, "utf8")) !== oldConfig;
         if (configChanged && (await restartService(paths, options))) await waitForLiveProxy(paths);
-        await writeClaudeWrapper(paths, manifest);
+        await writeClaudeWrapper(paths);
         return { changed: false, configChanged, release, canary: null };
       } catch (error) {
         await atomicWrite(paths.proxyConfig, oldConfig, 0o600).catch(() => {});
@@ -71,7 +71,7 @@ export async function upgrade(paths, manifest, options = {}) {
       await writeProxyConfig(paths, manifest, { port });
       await saveState(paths, nextState);
       if (await restartService(paths, options)) await waitForLiveProxy(paths);
-      await writeClaudeWrapper(paths, manifest);
+      await writeClaudeWrapper(paths);
     } catch (error) {
       await activateRelease(paths, oldState.activeRelease).catch(() => {});
       await atomicWrite(paths.proxyConfig, oldConfig, 0o600).catch(() => {});

@@ -15,7 +15,7 @@ export function validateManifest(manifest) {
   for (const field of ["version", "commit", "repository", "tag", "assets"]) {
     if (manifest.proxy?.[field] === undefined) throw new Error(`channel manifest missing proxy.${field}`);
   }
-  for (const model of ["sol", "opus", "fable"]) {
+  for (const model of ["opus", "fable"]) {
     if (!manifest.models?.[model]?.upstream || !manifest.models?.[model]?.alias) {
       throw new Error(`channel manifest missing models.${model}`);
     }
@@ -23,15 +23,6 @@ export function validateManifest(manifest) {
   for (const [model, entry] of Object.entries(manifest.models)) {
     if (!entry?.upstream || !entry?.alias) throw new Error(`channel manifest missing models.${model}`);
     if (entry.preview !== undefined && typeof entry.preview !== "boolean") throw new Error(`channel manifest has invalid models.${model}.preview`);
-    if (manifest.models[model].aliases !== undefined) {
-      if (!Array.isArray(manifest.models[model].aliases) || manifest.models[model].aliases.some((alias) => typeof alias !== "string" || !alias)) {
-        throw new Error(`channel manifest has invalid models.${model}.aliases`);
-      }
-    }
-  }
-  const sol = manifest.models.sol;
-  if (!Number.isSafeInteger(sol.contextWindow) || sol.contextWindow <= 0) {
-    throw new Error("channel manifest has invalid models.sol.contextWindow");
   }
   const testedClaude = manifest.compatibility?.claudeCode?.tested;
   if (!Array.isArray(testedClaude) || testedClaude.length === 0) {

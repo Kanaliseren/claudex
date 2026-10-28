@@ -51,12 +51,6 @@
     }
   },
   "models": {
-    "sol": {
-      "upstream": "gpt-6.1-sol",
-      "alias": "claude-sonnet-5-5",
-      "displayName": "GPT-6.1 Sol",
-      "contextWindow": 272000
-    },
     "opus": {
       "upstream": "claude-opus-5",
       "alias": "claude-opus-5",

@@ -1,7 +1,7 @@
 import { copyFile, readFile, stat } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { atomicWrite, ensureDir, exists, readJson } from "./util.js";
-import { claudeEnvironment } from "./wrapper.js";
+import { claudeEnvironment, writeClaudeWrapper } from "./wrapper.js";
 import { readProxyOptions, readQuotaHubConfig } from "./config.js";
 import { managementEndpoint } from "./hub.js";
 
@@ -15,6 +15,14 @@ const legacyModelOverrides = new Set([
   "ANTHROPIC_DEFAULT_HAIKU_MODEL_SUPPORTED_CAPABILITIES",
   "CLAUDE_CODE_MAX_CONTEXT_TOKENS",
   "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE",
+]);
+
+// Former GPT routes, mapped to the native Claude model that replaced each selector.
+const retiredModels = new Map([
+  ["gpt-6.1-sol", "claude-sonnet-5-5"],
+  ["gpt-6-astra", "claude-sonnet-5-5"],
+  ["gpt-6-sol", "claude-haiku-4-5-20251001"],
+  ["gpt-5.6-sol", "claude-haiku-4-5-20251001"],
 ]);
 
 export async function integrate(paths, manifest, target, { path, home = paths.userHome, includeHub = false, removeHub = false } = {}) {
@@ -48,18 +56,16 @@ export async function integrateT3(paths, manifest, configPath, { includeHub = fa
   if (provider.config?.customModels !== undefined && (!Array.isArray(provider.config.customModels) || provider.config.customModels.some((model) => typeof model !== "string" || !model))) {
     throw new Error("unsupported T3 Code config: Claude customModels must contain model names");
   }
-  const env = await claudeEnvironment(paths, manifest);
+  const env = await claudeEnvironment(paths);
   const models = Object.values(manifest.models).map((model) => model.upstream);
-  const retiredModels = new Set(["gpt-6-astra", "gpt-6-sol", "gpt-5.6-sol"]);
   const customModels = (provider.config?.customModels ?? []).filter((model) => !retiredModels.has(model));
   provider.config = {
     ...(provider.config ?? {}),
     customModels: [...new Set([...customModels, ...models])],
   };
-  if (config.defaultModelSelection?.instanceId === "claudeAgent" && retiredModels.has(config.defaultModelSelection.model)) {
-    config.defaultModelSelection.model = config.defaultModelSelection.model === "gpt-6-astra"
-      ? manifest.models.sol.upstream : "claude-haiku-4-5-20251001";
-  }
+  const replacement = config.defaultModelSelection?.instanceId === "claudeAgent"
+    ? retiredModels.get(config.defaultModelSelection.model) : undefined;
+  if (replacement) config.defaultModelSelection.model = replacement;
   provider.environment = provider.environment.filter(({ name }) => !legacyModelOverrides.has(name));
   for (const [name, value] of Object.entries(env)) {
     if (name === "ANTHROPIC_AUTH_TOKEN") continue;
@@ -95,6 +101,8 @@ export async function integrateT3(paths, manifest, configPath, { includeHub = fa
     } else if (sources) delete sources.claudex;
   }
   const backup = await backupAndWrite(paths, configPath, config, 0o600);
+  // Shared clients cannot run `update`, so integration also refreshes the terminal wrapper.
+  await writeClaudeWrapper(paths);
   return { target: "t3", path: configPath, backup };
 }
 

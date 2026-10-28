@@ -12,12 +12,12 @@ the same subscription quotas; the setup does not duplicate their allowances.
 ## Start using it
 
 1. In T3 Code, connect to **riz-server as dren** and create a new thread there.
-2. Select the **Claude** provider. The model routes are:
+2. Select the **Claude** provider. Every model uses its native Claude route:
 
    | Selection | Actual model |
    |---|---|
    | Haiku | Native Claude Haiku |
-   | gpt-6.1-sol (Sonnet route) | GPT-6.1 Sol through Codex |
+   | Sonnet | Native Claude Sonnet |
    | Opus 5 | Native Claude Opus 5 |
    | Fable 5.1 | Native Claude Fable 5.1 |
 
@@ -29,10 +29,10 @@ For terminal use, open Terminal on your Mac:
 ```bash
 ssh dren@riz-server
 claudex models
-claudex run sol
+claudex run opus
 ```
 
-Other sessions: `claudex run opus`, `claudex run opus55`, or `claudex run fable`.
+Other sessions: `claudex run opus55` or `claudex run fable`.
 `claudex claude` uses Claude Code's normal default. Use these commands for the bridge;
 the plain `claude` command starts the original Claude CLI directly.
 
@@ -61,7 +61,7 @@ no new login. Never paste a key or callback URL into chat.
 
 ## Updates
 
-In the `dren` SSH session, update the client and refresh its T3 integration:
+In the `dren` SSH session, update the client and refresh its T3 integration and terminal wrapper:
 
 ```bash
 npm install -g --prefix "$HOME/.local" github:Kanaliseren/claudex

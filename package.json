@@ -1,7 +1,7 @@
 {
   "name": "claudex",
   "version": "0.8.0",
-  "description": "Run Claude Code through your local Codex OAuth session via CLIProxyAPI",
+  "description": "Run Claude Code through your local Claude and Codex OAuth sessions via CLIProxyAPI",
   "type": "module",
   "bin": {
     "claudex": "bin/claudex.js",

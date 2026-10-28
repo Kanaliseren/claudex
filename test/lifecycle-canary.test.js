@@ -27,29 +27,21 @@ test("setup installs an inspected local binary without a service", { skip: proce
   assert.match(await readFile(paths.proxyConfig, "utf8"), /^port: 19417$/m);
 });
 
-test("isolated canary uses an access-only OAuth copy and exercises messages", { skip: process.platform === "win32" }, async (t) => {
+test("isolated canary boots the candidate without any credential", { skip: process.platform === "win32" }, async (t) => {
   const root = await temporaryRoot(t);
   const paths = resolvePaths({ env: { CLIPROXY_OAUTH_HOME: root }, home: root, platform: "linux" });
   await mkdir(paths.authDir, { recursive: true, mode: 0o700 });
-  await writeFile(
-    join(paths.authDir, "codex-test.json"),
-    JSON.stringify({ type: "codex", access_token: "access-only-test", refresh_token: "must-not-copy" }),
-    { mode: 0o600 },
-  );
+  await writeFile(join(paths.authDir, "claude-test.json"), JSON.stringify({ type: "claude", access_token: "must-not-copy" }), { mode: 0o600 });
   const binary = join(root, "fake-canary.mjs");
   await writeExecutable(binary, fakeCanaryServer);
 
-  const requestedModels = [];
+  const requests = [];
   const result = await runIsolatedCanary(binary, paths, fixtureManifest(), {
-    fetchImpl: (url, options) => {
-      if (options.method === "POST") requestedModels.push(JSON.parse(options.body).model);
-      return fetch(url, options);
-    },
+    fetchImpl: (url, options) => { requests.push(new URL(url).pathname); return fetch(url, options); },
   });
 
   assert.equal(result.passed, true);
-  assert.equal(result.oauthTested, true);
-  assert.deepEqual(requestedModels, ["claude-sonnet-5-5"]);
+  assert.deepEqual([...new Set(requests)], ["/v1/models"]);
 });
 
 test("upgrade canaries a distinct build and rollback restores the exact prior binary", { skip: process.platform === "win32" }, async (t) => {
@@ -94,7 +86,7 @@ test("upgrade refreshes the Claude wrapper when the proxy binary is unchanged", 
   assert.match(await readFile(paths.wrapper, "utf8"), /export ENABLE_TOOL_SEARCH=true/);
 });
 
-test("upgrade refreshes model aliases without changing the proxy key or port", { skip: process.platform === "win32" }, async (t) => {
+test("upgrade refreshes the proxy config without changing the proxy key or port", { skip: process.platform === "win32" }, async (t) => {
   const root = await temporaryRoot(t);
   const paths = resolvePaths({ env: { CLIPROXY_OAUTH_HOME: root }, home: root, platform: "linux" });
   const binary = join(root, "fake-proxy");
@@ -107,12 +99,9 @@ test("upgrade refreshes model aliases without changing the proxy key or port", {
   const originalKey = await readProxyKey(paths.proxyConfig);
   const nextManifest = {
     ...manifest,
-    models: {
-      ...manifest.models,
-      sol: {
-        ...manifest.models.sol,
-        aliases: ["claude-sonnet-future"],
-      },
+    compatibility: {
+      ...manifest.compatibility,
+      claudeCode: { ...manifest.compatibility.claudeCode, tested: ["2.1.999"] },
     },
   };
 
@@ -122,7 +111,7 @@ test("upgrade refreshes model aliases without changing the proxy key or port", {
   assert.equal(result.changed, false);
   assert.equal(result.configChanged, true);
   assert.match(config, /^port: 19417$/m);
-  assert.match(config, /alias: "claude-sonnet-future"/);
+  assert.match(config, /claude-cli\/2\.1\.999/);
   assert.equal(await readProxyKey(paths.proxyConfig), originalKey);
 });
 
@@ -159,7 +148,7 @@ async function writeExecutable(path, contents) {
 }
 
 const fakeCanaryServer = `#!/usr/bin/env node
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { createServer } from "node:http";
 if (process.argv.includes("-h")) {
   console.log("-codex-login -codex-device-login -config");
@@ -167,28 +156,16 @@ if (process.argv.includes("-h")) {
 }
 const config = readFileSync(process.argv[process.argv.indexOf("-config") + 1], "utf8");
 const port = Number(config.match(/^port: (\\d+)$/m)[1]);
+const authDir = JSON.parse(config.match(/^auth-dir: (.+)$/m)[1]);
 const server = createServer((request, response) => {
   response.setHeader("content-type", "application/json");
-  if (request.url === "/v1/models") {
-    response.end(JSON.stringify({data:[{id:"claude-sonnet-5"},{id:"claude-sonnet-5-5"}]}));
-  } else if (request.url === "/v1/messages") {
-    let body = "";
-    request.on("data", chunk => body += chunk);
-    request.on("end", () => response.end(JSON.stringify({content:[{type:"text",text:"OK"}]})));
-  } else { response.statusCode = 404; response.end("{}"); }
+  // Fail readiness if any credential reached the candidate.
+  response.statusCode = request.url === "/v1/models" && readdirSync(authDir).length === 0 ? 200 : 500;
+  response.end(JSON.stringify({ data: [] }));
 });
 server.listen(port, "127.0.0.1");
 process.on("SIGTERM", () => server.close(() => process.exit(0)));
 `;
-
-test("upstream canary requires Codex credentials and never substitutes Claude credentials", async (t) => {
-  const root = await temporaryRoot(t);
-  const paths = resolvePaths({ env: { CLAUDEX_HOME: root }, home: root });
-  await mkdir(paths.authDir, { recursive: true });
-  await writeFile(join(paths.authDir, "codex-misnamed.json"), JSON.stringify({ type: "claude", access_token: "test-native-token" }));
-  await assert.rejects(runIsolatedCanary("must-not-start", paths, fixtureManifest(), { requireOAuth: true }), /Codex OAuth credential is required/);
-});
-
 test("an older bundled channel cannot silently downgrade an upstream installation", async (t) => {
   const root = await temporaryRoot(t);
   const paths = resolvePaths({ env: { CLAUDEX_HOME: root }, home: root });

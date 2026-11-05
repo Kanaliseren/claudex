@@ -187,10 +187,10 @@ index 0000000..716f9a8
 +}
 diff --git a/plugins/clickhouse-sink/collector.go b/plugins/clickhouse-sink/collector.go
 new file mode 100644
-index 0000000..e4ceea6
+index 0000000..e95b43c
 --- /dev/null
 +++ b/plugins/clickhouse-sink/collector.go
-@@ -0,0 +1,144 @@
+@@ -0,0 +1,202 @@
 +//go:build collector
 +
 +// Collector mode: the same capture, redaction and ClickHouse sink, run as its
@@ -205,14 +205,20 @@ index 0000000..e4ceea6
 +import (
 +	"bufio"
 +	"encoding/binary"
++	"encoding/json"
 +	"io"
 +	"net"
 +	"os"
 +	"os/signal"
++	"runtime"
 +	"strings"
 +	"syscall"
 +	"time"
 +)
++
++// workers redact and store finished requests in parallel, so a large body
++// never stalls the socket reader (the tap drops events after 5 s of stall).
++var workers = make(chan struct{}, max(2, runtime.NumCPU()/2))
 +
 +// maxFrame bounds one event: the tap's 64 MiB payload limit plus the method.
 +const maxFrame = 64<<20 + 512
@@ -261,6 +267,10 @@ index 0000000..e4ceea6
 +			break
 +		}
 +		go serve(conn)
++	}
++	// Let in-flight workers finish, so their rows are flushed on shutdown.
++	for i := 0; i < cap(workers); i++ {
++		workers <- struct{}{}
 +	}
 +	current.shutdown()
 +}
@@ -331,9 +341,57 @@ index 0000000..e4ceea6
 +		current.capture.markLost()
 +		return
 +	}
++	switch method {
++	case "request.complete":
++		// Closing the capture is cheap and keeps event order; redaction and
++		// the insert run on a worker.
++		var req completion
++		if err := json.Unmarshal(payload, &req); err != nil {
++			logf("%s: decode: %v", method, err)
++			return
++		}
++		row := current.capture.complete(req)
++		if row.Model == "" && row.RequestedModel == "" {
++			return // model listings and similar calls are not inference
++		}
++		offload(func() {
++			if s := current.currentSink(); s != nil {
++				redactRequest(current.currentRedactor(), &row)
++				s.add(tableRequests, row)
++			}
++		})
++		return
++	case "usage.handle":
++		var record usageRecord
++		if err := json.Unmarshal(payload, &record); err != nil {
++			logf("%s: decode: %v", method, err)
++			return
++		}
++		row := usageRowFrom(record, current.capture.storeBodies())
++		offload(func() {
++			if s := current.currentSink(); s != nil {
++				redactUsage(current.currentRedactor(), &row)
++				s.add(tableUsage, row)
++			}
++		})
++		return
++	}
 +	if _, err := current.handle(method, payload); err != nil {
 +		logf("%s: %v", method, err)
 +	}
++}
++
++// offload runs fn on a worker, waiting for a free one; redactRequest and
++// redactUsage already fail closed on a panic.
++func offload(fn func()) {
++	workers <- struct{}{}
++	go func() {
++		defer func() {
++			_ = recover()
++			<-workers
++		}()
++		fn()
++	}()
 +}
 diff --git a/plugins/clickhouse-sink/deriver/clickhouse.go b/plugins/clickhouse-sink/deriver/clickhouse.go
 index d42a0ff..0ac460b 100644
@@ -459,8 +517,175 @@ index 30d3cd5..aa20728 100644
  func headerValues(h map[string]string) []string {
  	out := make([]string, 0, len(h))
  	for _, v := range h {
+diff --git a/plugins/clickhouse-sink/redact/detect.go b/plugins/clickhouse-sink/redact/detect.go
+new file mode 100644
+index 0000000..41b7885
+--- /dev/null
++++ b/plugins/clickhouse-sink/redact/detect.go
+@@ -0,0 +1,110 @@
++package redact
++
++import (
++	"crypto/sha256"
++	"sync"
++)
++
++// Agents resend the whole conversation on every turn, so a 2 MB request body
++// is mostly text already scanned in earlier requests. Running gitleaks over
++// the whole body is also slow, because nearly every rule's keyword appears
++// somewhere in it and the rule's regex then scans all of it. So text is cut
++// into content-defined segments (boundaries depend only on nearby bytes, so
++// they survive insertions elsewhere), each segment is scanned together with
++// the start of the next one, and findings are cached by the segment's hash.
++const (
++	segMin    = 4 << 10
++	segMax    = 32 << 10
++	segMask   = 8<<10 - 1 // ~8 KiB average segment
++	segWindow = 32
++	// segOverlap is how much of the next segment is scanned with each one:
++	// any secret up to this long that spans a boundary is still found whole.
++	segOverlap = 8 << 10
++	// cacheMax bounds the cache (~ entries × a few findings).
++	cacheMax = 200_000
++)
++
++type finding struct {
++	secret, rule, match string
++}
++
++type segmentCache struct {
++	mu      sync.Mutex
++	entries map[[32]byte][]finding
++}
++
++func (c *segmentCache) get(key [32]byte) ([]finding, bool) {
++	c.mu.Lock()
++	defer c.mu.Unlock()
++	f, ok := c.entries[key]
++	return f, ok
++}
++
++func (c *segmentCache) put(key [32]byte, f []finding) {
++	c.mu.Lock()
++	defer c.mu.Unlock()
++	if c.entries == nil || len(c.entries) >= cacheMax {
++		c.entries = make(map[[32]byte][]finding)
++	}
++	c.entries[key] = f
++}
++
++// segments returns content-defined cut points in text: a cut falls where a
++// rolling sum of the last segWindow bytes hits the mask, bounded by segMin
++// and segMax.
++func segments(text string) []int {
++	cuts := []int{0}
++	var sum uint32
++	last := 0
++	for i := 0; i < len(text); i++ {
++		sum = sum*31 + uint32(text[i])
++		if i >= segWindow {
++			sum -= uint32(text[i-segWindow]) * pow31Window
++		}
++		size := i + 1 - last
++		if (size >= segMin && sum&segMask == 0) || size >= segMax {
++			cuts = append(cuts, i+1)
++			last = i + 1
++		}
++	}
++	if last < len(text) {
++		cuts = append(cuts, len(text))
++	}
++	return cuts
++}
++
++// pow31Window is 31^segWindow mod 2^32, to drop the byte leaving the window.
++var pow31Window = func() uint32 {
++	p := uint32(1)
++	for i := 0; i < segWindow; i++ {
++		p *= 31
++	}
++	return p
++}()
++
++// detect returns gitleaks findings in text, scanning segment by segment with
++// overlap and reusing cached results for segments seen before.
++func (r *Redactor) detect(text string) []finding {
++	if r.detector == nil || text == "" {
++		return nil
++	}
++	cuts := segments(text)
++	var out []finding
++	for i := 0; i+1 < len(cuts); i++ {
++		end := cuts[i+1] + segOverlap
++		if end > len(text) {
++			end = len(text)
++		}
++		window := text[cuts[i]:end]
++		key := sha256.Sum256([]byte(window))
++		found, ok := r.cache.get(key)
++		if !ok {
++			for _, f := range r.detector.DetectString(window) {
++				found = append(found, finding{secret: f.Secret, rule: f.RuleID, match: f.Match})
++			}
++			r.cache.put(key, found)
++		}
++		out = append(out, found...)
++	}
++	return out
++}
+diff --git a/plugins/clickhouse-sink/redact/detect_test.go b/plugins/clickhouse-sink/redact/detect_test.go
+new file mode 100644
+index 0000000..4356a3c
+--- /dev/null
++++ b/plugins/clickhouse-sink/redact/detect_test.go
+@@ -0,0 +1,45 @@
++package redact
++
++import (
++	"strings"
++	"testing"
++	"time"
++)
++
++func TestSegmentedDetectionFindsSecretsAcrossBoundariesAndCaches(t *testing.T) {
++	r, err := New()
++	if err != nil {
++		t.Fatal(err)
++	}
++	token := "ghp_Zk3Q9mW2xV7pL4tR8nB1cH6jD5fG0sA2eY9u"
++	filler := strings.Repeat(`{"role":"user","content":"please run the tests and fix the failing assertion"},`, 3000)
++	// Secrets near every kind of position: start, middle, end, and right
++	// across each cut point of the filler.
++	text := token + " " + filler + " " + token + " " + filler + " " + token
++	cuts := segments(text)
++	if len(cuts) < 10 {
++		t.Fatalf("expected many segments, got %d", len(cuts))
++	}
++	for _, cut := range cuts[1 : len(cuts)-1] {
++		if cut > 20 && cut+20 < len(text) {
++			text = text[:cut-20] + token + text[cut-20:]
++			break
++		}
++	}
++	found := 0
++	for _, f := range r.detect(text) {
++		if f.secret == token {
++			found++
++		}
++	}
++	if found < 4 {
++		t.Fatalf("found the token %d times, want at least 4", found)
++	}
++
++	// A follow-up request that appends to the same history mostly hits the cache.
++	start := time.Now()
++	r.detect(text + filler[:5000])
++	if elapsed := time.Since(start); elapsed > time.Second {
++		t.Fatalf("re-scanning cached history took %v", elapsed)
++	}
++}
 diff --git a/plugins/clickhouse-sink/redact/redact.go b/plugins/clickhouse-sink/redact/redact.go
-index dfcf395..5c11846 100644
+index dfcf395..ad8a9b2 100644
 --- a/plugins/clickhouse-sink/redact/redact.go
 +++ b/plugins/clickhouse-sink/redact/redact.go
 @@ -31,7 +31,9 @@ const (
@@ -474,7 +699,7 @@ index dfcf395..5c11846 100644
  	// RuleKnown names matches of configured secret values.
  	RuleKnown = "known"
  )
-@@ -63,6 +65,8 @@ type Redactor struct {
+@@ -63,9 +65,12 @@ type Redactor struct {
  	mtimes    map[string]time.Time
  	lastCheck time.Time
  	known     map[string]string // encoded form -> replacement
@@ -483,7 +708,11 @@ index dfcf395..5c11846 100644
  	disabled  map[string]bool
  
  	detector *detect.Detector
-@@ -90,6 +94,7 @@ func (r *Redactor) Configure(files, disabledRules []string) {
++	cache    segmentCache
+ }
+ 
+ // New returns a Redactor with gitleaks' default rules. It returns an error
+@@ -90,6 +95,7 @@ func (r *Redactor) Configure(files, disabledRules []string) {
  	}
  	r.lastCheck = time.Time{}
  	r.mtimes = map[string]time.Time{}
@@ -491,7 +720,28 @@ index dfcf395..5c11846 100644
  	r.mu.Unlock()
  	r.reloadIfStale(time.Now())
  }
-@@ -204,9 +209,13 @@ func (r *Redactor) reloadIfStale(now time.Time) {
+@@ -139,15 +145,13 @@ func (r *Redactor) NewReplacer(texts []string) *Replacer {
+ 	disabled := r.disabled
+ 	r.mu.Unlock()
+ 
+-	if r.detector != nil {
+-		joined := strings.Join(texts, "\n")
+-		for _, finding := range r.detector.DetectString(joined) {
+-			secret := finding.Secret
+-			if len(secret) < 8 || disabled[finding.RuleID] || isIdentifierMatch(finding.Match) {
++	for _, text := range texts {
++		for _, f := range r.detect(text) {
++			if len(f.secret) < 8 || disabled[f.rule] || isIdentifierMatch(f.match) {
+ 				continue
+ 			}
+-			if _, exists := pairs[secret]; !exists {
+-				pairs[secret] = Marker(finding.RuleID, secret)
++			if _, exists := pairs[f.secret]; !exists {
++				pairs[f.secret] = Marker(f.rule, f.secret)
+ 			}
+ 		}
+ 	}
+@@ -204,9 +208,13 @@ func (r *Redactor) reloadIfStale(now time.Time) {
  	old := r.mtimes
  	r.mu.Unlock()
  
@@ -507,7 +757,7 @@ index dfcf395..5c11846 100644
  	for _, p := range paths {
  		info, errStat := os.Stat(p)
  		if errStat != nil {
-@@ -223,25 +232,53 @@ func (r *Redactor) reloadIfStale(now time.Time) {
+@@ -223,25 +231,53 @@ func (r *Redactor) reloadIfStale(now time.Time) {
  		r.mu.Unlock()
  		return
  	}
@@ -566,7 +816,7 @@ index dfcf395..5c11846 100644
  			continue
  		}
  		if !info.IsDir() {
-@@ -250,6 +287,7 @@ func expandFiles(files []string) []string {
+@@ -250,6 +286,7 @@ func expandFiles(files []string) []string {
  		}
  		entries, errRead := os.ReadDir(f)
  		if errRead != nil {
@@ -574,7 +824,7 @@ index dfcf395..5c11846 100644
  			continue
  		}
  		for _, e := range entries {
-@@ -259,7 +297,7 @@ func expandFiles(files []string) []string {
+@@ -259,7 +296,7 @@ func expandFiles(files []string) []string {
  		}
  	}
  	sort.Strings(out)
@@ -583,7 +833,7 @@ index dfcf395..5c11846 100644
  }
  
  // addKnown registers a secret in the forms it can appear in a body: raw,
-@@ -282,25 +320,26 @@ func addKnown(known map[string]string, secret string) {
+@@ -282,25 +319,26 @@ func addKnown(known map[string]string, secret string) {
  
  // readSecrets extracts credentials from one file, chosen by its name:
  // .json and .yaml/.yml by key name, .env by value, anything else one per line.
@@ -616,7 +866,7 @@ index dfcf395..5c11846 100644
  	case name == ".env" || strings.HasSuffix(name, ".env"):
  		var out []string
  		sc := bufio.NewScanner(bytes.NewReader(raw))
-@@ -313,7 +352,7 @@ func readSecrets(path string) []string {
+@@ -313,7 +351,7 @@ func readSecrets(path string) []string {
  				out = append(out, strings.Trim(strings.TrimSpace(value), `"'`))
  			}
  		}
@@ -625,7 +875,7 @@ index dfcf395..5c11846 100644
  	default:
  		var out []string
  		sc := bufio.NewScanner(bytes.NewReader(raw))
-@@ -322,7 +361,7 @@ func readSecrets(path string) []string {
+@@ -322,7 +360,7 @@ func readSecrets(path string) []string {
  				out = append(out, line)
  			}
  		}
@@ -634,6 +884,28 @@ index dfcf395..5c11846 100644
  	}
  }
  
+diff --git a/plugins/clickhouse-sink/redact/split.go b/plugins/clickhouse-sink/redact/split.go
+index 9aa9848..e4d8564 100644
+--- a/plugins/clickhouse-sink/redact/split.go
++++ b/plugins/clickhouse-sink/redact/split.go
+@@ -59,13 +59,11 @@ func (r *Redactor) RedactSplitSecrets(chunks []string, res *Result) {
+ 	for secret, marker := range known {
+ 		addAll(secret, marker)
+ 	}
+-	if r.detector != nil {
+-		for _, finding := range r.detector.DetectString(joined) {
+-			if len(finding.Secret) < 8 || disabled[finding.RuleID] || isIdentifierMatch(finding.Match) {
+-				continue
+-			}
+-			addAll(finding.Secret, Marker(finding.RuleID, finding.Secret))
++	for _, f := range r.detect(joined) {
++		if len(f.secret) < 8 || disabled[f.rule] || isIdentifierMatch(f.match) {
++			continue
+ 		}
++		addAll(f.secret, Marker(f.rule, f.secret))
+ 	}
+ 
+ 	replace := map[int]string{}
 diff --git a/plugins/clickhouse-sink/redact_fields_test.go b/plugins/clickhouse-sink/redact_fields_test.go
 new file mode 100644
 index 0000000..4968d12

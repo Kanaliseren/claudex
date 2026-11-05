@@ -548,22 +548,23 @@ index 38541b0..16c17f7 100644
  // request, response and usage record in ClickHouse.
  //
 diff --git a/plugins/clickhouse-sink/redact.go b/plugins/clickhouse-sink/redact.go
-index 30d3cd5..027de57 100644
+index 30d3cd5..425d696 100644
 --- a/plugins/clickhouse-sink/redact.go
 +++ b/plugins/clickhouse-sink/redact.go
-@@ -1,6 +1,10 @@
+@@ -1,6 +1,11 @@
  package main
  
 -import "github.com/api-token/Cli-Proxy-API-Management-Center/plugins/clickhouse-sink/redact"
 +import (
 +	"strings"
++	"unicode/utf8"
 +
 +	"github.com/api-token/Cli-Proxy-API-Management-Center/plugins/clickhouse-sink/redact"
 +)
  
  // redactRequest redacts every free-text field of a request row in place,
  // including secrets split across stream chunks. On a panic, or without a
-@@ -16,13 +20,20 @@ func redactRequest(r *redact.Redactor, row *requestRow) {
+@@ -16,13 +21,20 @@ func redactRequest(r *redact.Redactor, row *requestRow) {
  		failClosed(row)
  		return
  	}
@@ -586,7 +587,7 @@ index 30d3cd5..027de57 100644
  	row.RequestBody = rep.Apply(row.RequestBody, res)
  	row.ResponseBody = rep.Apply(row.ResponseBody, res)
  	for i := range row.ResponseChunks {
-@@ -35,31 +46,89 @@ func redactRequest(r *redact.Redactor, row *requestRow) {
+@@ -35,31 +47,109 @@ func redactRequest(r *redact.Redactor, row *requestRow) {
  	row.RedactionRules = res.Rules()
  }
  
@@ -628,7 +629,7 @@ index 30d3cd5..027de57 100644
  	}
 -	texts := append([]string{row.FailureBody}, headerValues(row.ResponseHeaders)...)
 +	for _, f := range fields {
-+		*f = strings.ToValidUTF8(*f, "\uFFFD")
++		*f = validUTF8(*f)
 +	}
 +	normalizeHeaders(row.ResponseHeaders)
 +	texts := headerValues(row.ResponseHeaders)
@@ -657,24 +658,44 @@ index 30d3cd5..027de57 100644
 +// match across invalid bytes where Go's regexp can.
 +func normalizeRequest(row *requestRow) {
 +	for _, f := range requestStrings(row) {
-+		*f = strings.ToValidUTF8(*f, "\uFFFD")
++		*f = validUTF8(*f)
 +	}
-+	row.RequestBody = strings.ToValidUTF8(row.RequestBody, "\uFFFD")
-+	row.ResponseBody = strings.ToValidUTF8(row.ResponseBody, "\uFFFD")
++	row.RequestBody = validUTF8(row.RequestBody)
++	row.ResponseBody = validUTF8(row.ResponseBody)
 +	for i := range row.ResponseChunks {
-+		row.ResponseChunks[i] = strings.ToValidUTF8(row.ResponseChunks[i], "\uFFFD")
++		row.ResponseChunks[i] = validUTF8(row.ResponseChunks[i])
 +	}
 +	normalizeHeaders(row.RequestHeaders)
 +	normalizeHeaders(row.ResponseHeaders)
 +}
 +
++// validUTF8 replaces each invalid byte with U+FFFD, exactly as encoding/json
++// does when the row is serialized (strings.ToValidUTF8 would merge runs).
++func validUTF8(s string) string {
++	if utf8.ValidString(s) {
++		return s
++	}
++	var b strings.Builder
++	b.Grow(len(s) + 8)
++	for i := 0; i < len(s); {
++		r, size := utf8.DecodeRuneInString(s[i:])
++		if r == utf8.RuneError && size == 1 {
++			b.WriteString("\uFFFD")
++		} else {
++			b.WriteString(s[i : i+size])
++		}
++		i += size
++	}
++	return b.String()
++}
++
 +func normalizeHeaders(h map[string]string) {
 +	for k, v := range h {
-+		nk := strings.ToValidUTF8(k, "\uFFFD")
++		nk := validUTF8(k)
 +		if nk != k {
 +			delete(h, k)
 +		}
-+		h[nk] = strings.ToValidUTF8(v, "\uFFFD")
++		h[nk] = validUTF8(v)
 +	}
 +}
 +
@@ -858,13 +879,14 @@ index dfcf395..5c11846 100644
  
 diff --git a/plugins/clickhouse-sink/redact_fields_test.go b/plugins/clickhouse-sink/redact_fields_test.go
 new file mode 100644
-index 0000000..ba0bb30
+index 0000000..8fb36a2
 --- /dev/null
 +++ b/plugins/clickhouse-sink/redact_fields_test.go
-@@ -0,0 +1,112 @@
+@@ -0,0 +1,125 @@
 +package main
 +
 +import (
++	"encoding/json"
 +	"os"
 +	"path/filepath"
 +	"strings"
@@ -972,6 +994,18 @@ index 0000000..ba0bb30
 +	redactRequest(r, &row)
 +	if strings.Contains(row.RequestBody, token) || strings.Contains(row.ResponseChunks[0], token) {
 +		t.Fatalf("token survived: %q / %q", row.RequestBody, row.ResponseChunks[0])
++	}
++}
++
++func TestNormalizationMatchesJSONEncoding(t *testing.T) {
++	for _, in := range []string{"a\xff\xffb", "\xe2\x82", "ok \xc3\x28 \xf0\x9f\x98", "plain", ""} {
++		// What ClickHouse stores is the decoded JSON string.
++		raw, _ := json.Marshal(in)
++		var stored string
++		_ = json.Unmarshal(raw, &stored)
++		if got := validUTF8(in); got != stored {
++			t.Fatalf("%q: normalized %q, stored %q", in, got, stored)
++		}
 +	}
 +}
 diff --git a/plugins/clickhouse-sink/schema.sql b/plugins/clickhouse-sink/schema.sql

@@ -68,7 +68,9 @@ export async function upgrade(paths, manifest, options = {}) {
     const nextState = transitionState(oldState, release);
     try {
       await activateRelease(paths, release);
-      await writeProxyConfig(paths, manifest, { port });
+      // The canary already proved whether the new proxy loads the tap.
+      const tap = canary.requestLog ? { tapPaused: canary.requestLog !== "ok" } : {};
+      await writeProxyConfig(paths, manifest, { port, ...tap });
       await saveState(paths, nextState);
       if (await restartService(paths, options)) await waitForLiveProxy(paths);
       await writeClaudeWrapper(paths);

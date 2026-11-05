@@ -9,10 +9,20 @@ export async function writeProxyConfig(paths, manifest, { port = 8317, ...overri
     proxyKey = await readProxyKey(paths.proxyConfig);
   }
   const options = { ...(await readProxyOptions(paths.proxyConfig)), ...overrides };
-  if (options.requestLog) await verifyTap(paths, manifest);
+  // A missing or changed tap pauses logging rather than blocking the proxy.
+  if (options.requestLog && !options.tapPaused && !(await tapVerified(paths, manifest))) options.tapPaused = true;
   const yaml = renderProxyConfig({ paths, manifest, port, proxyKey, ...options });
   await atomicWrite(paths.proxyConfig, yaml, 0o600);
-  return { proxyKey, port };
+  return { proxyKey, port, requestLog: options.requestLog ? (options.tapPaused ? "paused" : "active") : "off" };
+}
+
+export async function tapVerified(paths, manifest) {
+  try {
+    await verifyTap(paths, manifest);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // The proxy loads every library under its plugin directory in-process, next
@@ -32,7 +42,7 @@ export async function verifyTap(paths, manifest) {
   await ensureDir(dirname(paths.tapSocket));
 }
 
-export function renderProxyConfig({ paths, manifest, port, proxyKey, dashboard = false, managementKey = "", sessionAffinity = false, strategy = "round-robin", requestLog = false }) {
+export function renderProxyConfig({ paths, manifest, port, proxyKey, dashboard = false, managementKey = "", sessionAffinity = false, strategy = "round-robin", requestLog = false, tapPaused = false }) {
   if (dashboard && !managementKey) throw new Error("dashboard requires a management key");
   if (!["round-robin", "fill-first"].includes(strategy)) throw new Error("unsupported routing strategy");
   const claudeCodeVersion = manifest.compatibility.claudeCode.tested.at(-1);
@@ -67,15 +77,16 @@ routing:
 
 claude-header-defaults:
   user-agent: ${yamlString(`claude-cli/${claudeCodeVersion} (external, cli)`)}
-${requestLog ? renderRequestLog(paths) : ""}`;
+${requestLog ? renderRequestLog(paths, !tapPaused) : ""}`;
 }
 
 // claudex-tap only copies traffic to the collector's socket and never changes
 // it; redaction and storage happen outside the proxy (deploy/clickhouse).
-function renderRequestLog(paths) {
+// While paused the block stays, so the choice survives, but nothing loads.
+function renderRequestLog(paths, active) {
   return `
 plugins:
-  enabled: true
+  enabled: ${active}
   dir: ${yamlString(paths.pluginsDir)}
   configs:
     claudex-tap:
@@ -142,5 +153,6 @@ export async function readProxyOptions(path) {
     sessionAffinity: blockValue("routing", "session-affinity") === "true",
     strategy: blockValue("routing", "strategy") ?? "round-robin",
     requestLog: blockValue("plugins", "socket") !== undefined,
+    tapPaused: blockValue("plugins", "enabled") === "false",
   };
 }

@@ -1,8 +1,11 @@
 <clickhouse>
-    <!-- Server logs at warning and no text_log, so query text (which can quote
-         stored prompts) is not written to log files. -->
+    <!-- Warnings only, small rotated files, and no text_log. Failed queries
+         still log their text (which can quote searched prompts) to these files,
+         inside the container. -->
     <logger>
         <level>warning</level>
+        <size>50M</size>
+        <count>2</count>
     </logger>
     <text_log remove="remove"/>
 

@@ -16,6 +16,8 @@ x-sink: &sink
   secrets: [clickhouse_writer]
   networks: [internal]
   read_only: true
+  logging: &logging
+    options: { max-size: 10m, max-file: "3" }
 
 services:
   clickhouse:
@@ -43,6 +45,7 @@ services:
     ulimits:
       nofile: { soft: 262144, hard: 262144 }
     mem_limit: 8g
+    logging: *logging
 
   # Receives claudex-tap's events on a unix socket, redacts them and writes the
   # raw tables. It runs here, not in the proxy, so a crash or overload only
@@ -56,6 +59,9 @@ services:
     environment:
       TAP_SOCKET: /tap/tap.sock
       SINK_CONFIG: /etc/claudex/collector.yaml
+      # Keeps the Go heap well inside mem_limit, so a burst slows the
+      # collector down instead of getting it killed.
+      GOMEMLIMIT: 1536MiB
     volumes:
       - ${HOME}/.local/state/claudex/tap:/tap
       - ./collector.yaml:/etc/claudex/collector.yaml:ro
@@ -75,6 +81,7 @@ services:
       CLICKHOUSE_USER: claudex_writer
       CLICKHOUSE_DB: cliproxy
       REDACT_FILES: /redact/config,/redact/auth
+      GOMEMLIMIT: 800MiB
     volumes:
       - ${HOME}/.config/claudex:/redact/config:ro
       - ${HOME}/.local/state/claudex/auth:/redact/auth:ro

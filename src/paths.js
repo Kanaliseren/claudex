@@ -53,6 +53,7 @@ export function resolvePaths({ env = process.env, platform = process.platform, h
     currentBinary: join(dataDir, "current", executable),
     pluginsDir: join(dataDir, "plugins"),
     tapSocket: join(stateDir, "tap", "tap.sock"),
+    tmpDir: join(stateDir, "tmp"),
     executable,
     wrapper: join(binDir, platform === "win32" ? "claude-cliproxy.cmd" : "claude-cliproxy"),
     stateFile: join(stateDir, "state.json"),

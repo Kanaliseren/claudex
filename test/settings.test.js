@@ -29,7 +29,7 @@ test("dashboard and sticky routing survive regeneration and upstream key hashing
   await writeFile(paths.proxyConfig, (await readFile(paths.proxyConfig, "utf8")).replace(key, hash));
   await writeProxyConfig(paths, manifest);
   assert.deepEqual(await readProxyOptions(paths.proxyConfig), {
-    dashboard: true, managementKey: hash, sessionAffinity: true, strategy: "fill-first", requestLog: false,
+    dashboard: true, managementKey: hash, sessionAffinity: true, strategy: "fill-first", requestLog: false, tapPaused: false,
   });
   assert.equal(await readProxyKey(paths.proxyConfig), proxyKey);
   assert.equal((await readProxySummary(paths.proxyConfig)).remoteManagementDisabled, true);
@@ -44,7 +44,8 @@ test("a failed service restart restores the prior configuration", { skip: proces
   const paths = resolvePaths({ env: { CLAUDEX_HOME: root }, home: root });
   const manifest = fixtureManifest();
   await writeProxyConfig(paths, manifest);
-  paths.systemdUnit = paths.proxyConfig;
+  paths.systemdUnit = join(root, "claudex.service");
+  await writeFile(paths.systemdUnit, "[Service]\n");
   const previous = await readFile(paths.proxyConfig, "utf8");
   await assert.rejects(configure(paths, manifest, {
     dashboard: true, platform: "linux", runCommand: async () => { throw new Error("restart failed"); },
@@ -89,6 +90,16 @@ plugins:
 `));
   assert.equal((await readProxyOptions(paths.proxyConfig)).requestLog, true);
   assert.equal((await checkUpdate(paths, manifest)).configMatchesChannel, true);
+
+  // A tap that no longer matches its pin pauses logging on the next write
+  // (e.g. claudex update) instead of blocking it; an explicit enable resumes.
+  await writeFile(tap, "changed build");
+  assert.equal((await writeProxyConfig(paths, manifest)).requestLog, "paused");
+  assert.match(await readFile(paths.proxyConfig, "utf8"), /^plugins:\n  enabled: false\n/m);
+  await writeFile(tap, library);
+  assert.equal((await writeProxyConfig(paths, manifest)).requestLog, "paused");
+  await configure(paths, manifest, { requestLog: true });
+  assert.equal((await readProxyOptions(paths.proxyConfig)).tapPaused, false);
 
   await configure(paths, manifest, { requestLog: false });
   assert.doesNotMatch(await readFile(paths.proxyConfig, "utf8"), /plugins:/);

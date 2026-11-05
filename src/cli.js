@@ -70,7 +70,8 @@ export async function main(argv = process.argv.slice(2), io = console) {
       io.log(`Dashboard: ${settings.enabled ? settings.url : "disabled"}`);
       if (settings.enabled) io.log(`Management key file (keep private): ${settings.keyFile}`);
       io.log(`Routing: ${settings.strategy}; session affinity: ${settings.sessionAffinity ? "enabled" : "disabled"}`);
-      io.log(`Request logging: ${settings.requestLog ? "enabled" : "disabled"}`);
+      io.log(`Request logging: ${settings.requestLog}`);
+      if (settings.requestLog === "paused") io.log(tapPausedHint);
       if (settings.restarted === false) io.log("Restart the foreground proxy to apply these settings.");
     }
     return 0;
@@ -183,9 +184,8 @@ export async function main(argv = process.argv.slice(2), io = console) {
       io.log(`Upgraded to ${result.release.version} (${result.release.sha256.slice(0, 12)}).`);
       io.log("Isolated canary: passed.");
       if (result.canary?.requestLog === "ok") io.log("Request logging: the new proxy loads claudex-tap.");
-      if (result.canary?.requestLog === "incompatible") {
-        io.log("WARNING: the new proxy did not load claudex-tap; request logging is off until the tap is rebuilt for it.");
-      }
+      if (result.canary?.requestLog === "incompatible") io.log(`WARNING: the new proxy did not register claudex-tap, so request logging is paused. ${tapPausedHint}`);
+      if (result.canary?.requestLog === "unavailable") io.log(`WARNING: claudex-tap is missing or does not match its pin, so request logging is paused. ${tapPausedHint}`);
     }
     return 0;
   }
@@ -236,6 +236,8 @@ Environment:
   CLIPROXY_OAUTH_HOME  Legacy alias for CLAUDEX_HOME.
   CLAUDE_CODE_BINARY   Override the Claude Code executable.
 `;
+
+const tapPausedHint = "The proxy works normally. Rebuild the tap (deploy/clickhouse/build-plugin.sh), then run claudex configure --request-log.";
 
 function parseArguments(args) {
   const options = {};

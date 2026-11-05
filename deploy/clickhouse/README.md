@@ -15,7 +15,7 @@ Claude Code / Codex ──► CLIProxyAPI ──► Anthropic / OpenAI
 
 | Part | What it is |
 |---|---|
-| `tap/` → `claudex-tap.so` | Our CLIProxyAPI plugin, ~350 lines, no dependencies. Every hook copies its payload into a 64 MiB queue and returns an empty result, so requests and responses are never changed. One goroutine writes the queue to the collector's socket; when the collector is down or slow, events are dropped and the proxy never waits. It never calls back into the proxy. |
+| `tap/` → `claudex-tap.so` | Our CLIProxyAPI plugin, ~350 lines, no dependencies. Each hook reserves room in a 64 MiB budget before copying its payload, queues it and returns an empty result, so requests and responses are never changed. One goroutine writes the queue to the collector's socket; when the collector is down or slow, events are dropped (and announced to the collector later) and the proxy never waits. It never calls back into the proxy, and shutdown releases everything. |
 | collector | The third-party [clickhouse-sink](https://github.com/api-token/Cli-Proxy-API-Management-Center/tree/68c9bb8c701f2ed229e989a07f6d1ef1ec79da7a/plugins/clickhouse-sink) capture, redaction and writer at a pinned commit, plus `clickhouse-sink.patch`, run as its own process. It writes `requests` and `usage`. A crash, stall or memory blow-up here only loses log rows. |
 | deriver | From the same pinned source. Fills `request_facts` and the `messages` / `request_summary` views. |
 | `compose.yaml` | ClickHouse 26.8 LTS on `127.0.0.1:8123`, the collector and the deriver. The collector and deriver sit on an internal network with no route out, and their writer user cannot use `url()`, `remote()` or `file()`. |
@@ -43,11 +43,19 @@ CLAUDEX_UID=$(id -u) CLAUDEX_GID=$(id -g) docker compose up -d --build
 claudex configure --request-log
 ```
 
-`claudex configure --no-request-log` turns it off. claudex refuses to enable
-the tap, or to write a config with it, unless the plugin directory holds only
-`claudex-tap.so` with the pinned checksum. On `claudex update`, the isolated
-canary also checks that the new proxy still loads the tap and warns if not; the
-proxy keeps working either way, only logging stops.
+`claudex configure --no-request-log` turns it off. The plugin directory must
+hold only `claudex-tap.so` with the pinned checksum: `configure --request-log`
+refuses otherwise, and any other config write (for example `claudex update`)
+pauses logging instead (`plugins.enabled: false`) so the proxy is never blocked.
+On `claudex update`, the isolated canary first boots the new proxy with the tap
+and checks that the host registered it; if not, it checks the proxy without
+plugins and activates it with logging paused, with a warning. After rebuilding
+the tap, `claudex configure --request-log` resumes logging.
+
+The proxy copies plugins into `TMPDIR` before loading them, so the systemd
+unit sets an owner-only `TMPDIR` (refreshed on every claudex restart). The
+collector accepts no traffic until every file in the config and auth
+directories has been read, so no row is redacted against a partial secret set.
 
 ## Searching
 
@@ -72,10 +80,13 @@ tokens, ~8 GB of raw JSON). The stack keeps what matters and drops the rest:
 - `messages` / `request_facts` keep each turn's new input and the reply once,
   forever. Images, files and encrypted reasoning become placeholders there.
 - `usage` and the metadata columns of `requests` stay forever.
-- Raw `request_body`, `response_body` and `response_chunks` expire after
-  14 days, in daily partitions so each day is rewritten once.
+- Raw `request_body`, `response_body` and `response_chunks` expire 14 days
+  after their day; with daily partitions a day's bodies expire together.
 - ClickHouse's own metric and trace tables are off (`config.xml`); they would
-  otherwise add several GB a day. `query_log` keeps 7 days.
+  otherwise add several GB a day. `query_log` keeps 7 days, server log files
+  2 × 50 MB, and each container's Docker log 3 × 10 MB.
+- The collector and deriver have Go memory limits under their container
+  limits, so a burst slows them down instead of getting them killed.
 
 Expect roughly 20–40 GB for the 14-day raw window and 5–15 GB a year of
 derived data. Never run the deriver's `--rebuild` once raw bodies have expired:
@@ -94,7 +105,12 @@ it would re-derive those requests from empty bodies and lose their messages.
 - captures are capped (64 MiB per request, 512 MiB in flight), the ClickHouse
   client ignores redirects and proxy variables, and ClickHouse error text, which
   can quote rejected rows, is not logged;
-- raw bodies expire after 14 days, with daily partitions.
+- raw bodies expire after 14 days, with daily partitions;
+- a `tap.dropped` announcement marks in-flight requests with
+  `[clickhouse-sink: events lost, capture incomplete]` in `error`; so does a
+  completion whose request never arrived;
+- the collector only accepts the tap's methods and waits for a complete secret
+  set before listening.
 
 ## What is not covered
 
@@ -103,7 +119,8 @@ it would re-derive those requests from empty bodies and lose their messages.
   pattern-matched secret that only appears base64-encoded, and JSON that spells
   a secret with `\uXXXX` escapes.
 - A request whose capture is dropped (over a size cap, or while the collector
-  is down) keeps no messages for that turn.
+  is down) keeps no messages for that turn; requests that are entirely lost
+  leave no row at all, only the drop counts in the proxy and collector logs.
 - CLIProxyAPI's own error logs (`<auth dir>/logs/error-*.log`) still contain
   unredacted request bodies; that is upstream behaviour, independent of this.
 - When the dashboard is enabled, CLIProxyAPI's management API can install

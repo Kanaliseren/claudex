@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { atomicWrite, ensureDir, exists, run } from "./util.js";
 import { dirname } from "node:path";
 
@@ -8,7 +9,19 @@ export async function installService(paths, { platform = process.platform, runCo
 }
 
 async function installSystemd(paths, runCommand) {
+  await writeSystemdUnit(paths);
+  await runCommand("systemctl", ["--user", "daemon-reload"]);
+  await runCommand("systemctl", ["--user", "enable", paths.serviceName]);
+  await runCommand("systemctl", ["--user", "restart", paths.serviceName]);
+  return { kind: "systemd", installed: true, path: paths.systemdUnit };
+}
+
+// The proxy copies plugins into TMPDIR before loading them, so TMPDIR is an
+// owner-only directory rather than the shared /tmp (PrivateTmp does not apply
+// to user services). Returns whether the unit changed.
+async function writeSystemdUnit(paths) {
   await ensureDir(dirname(paths.systemdUnit));
+  await ensureDir(paths.tmpDir);
   const unit = `[Unit]
 Description=CLIProxyAPI OAuth proxy
 After=network-online.target
@@ -20,15 +33,14 @@ Restart=on-failure
 RestartSec=2
 NoNewPrivileges=true
 PrivateTmp=true
+Environment=TMPDIR=${systemdValue(paths.tmpDir)}
 
 [Install]
 WantedBy=default.target
 `;
+  if ((await exists(paths.systemdUnit)) && (await readFile(paths.systemdUnit, "utf8")) === unit) return false;
   await atomicWrite(paths.systemdUnit, unit, 0o600);
-  await runCommand("systemctl", ["--user", "daemon-reload"]);
-  await runCommand("systemctl", ["--user", "enable", paths.serviceName]);
-  await runCommand("systemctl", ["--user", "restart", paths.serviceName]);
-  return { kind: "systemd", installed: true, path: paths.systemdUnit };
+  return true;
 }
 
 async function installLaunchd(paths, runCommand) {
@@ -60,6 +72,8 @@ export async function restartService(paths, { platform = process.platform, runCo
     // Existing quota hubs depend on the proxy; restart them with it without rewriting their setup.
     const services = [paths.serviceName];
     if (await exists(paths.hubSystemdUnit)) services.push(paths.hubServiceName);
+    // Units from older claudex versions pick up current settings on restart.
+    if (await writeSystemdUnit(paths)) await runCommand("systemctl", ["--user", "daemon-reload"]);
     await runCommand("systemctl", ["--user", "restart", ...services]);
     return true;
   }

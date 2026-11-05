@@ -79,11 +79,22 @@ func cliproxyPluginCall(method *C.char, request *C.uint8_t, requestLen C.size_t,
 	if method == nil {
 		return 1
 	}
+	name := C.GoString(method)
+	// Only needed payloads are copied, and forwarded ones only after their
+	// bytes are reserved, so a payload the tap will drop is never allocated.
 	var payload []byte
-	if request != nil && requestLen > 0 {
+	if request != nil && requestLen > 0 && current.wants(name) {
+		if forwarded[name] && !current.reserve(int(requestLen)) {
+			return writeReply(response, emptyResult)
+		}
 		payload = C.GoBytes(unsafe.Pointer(request), C.int(requestLen))
+	} else if forwarded[name] && !current.reserve(0) {
+		return writeReply(response, emptyResult)
 	}
-	raw := current.call(C.GoString(method), payload)
+	return writeReply(response, current.call(name, payload))
+}
+
+func writeReply(response *C.cliproxy_buffer, raw []byte) C.int {
 	if response != nil && len(raw) > 0 {
 		if ptr := C.CBytes(raw); ptr != nil {
 			response.ptr = ptr

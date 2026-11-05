@@ -53,11 +53,11 @@ export async function upgrade(paths, manifest, options = {}) {
     const release = await stageRelease(paths, manifest, options);
     if (release.sha256 === oldState.activeRelease.sha256) {
       try {
-        await writeProxyConfig(paths, manifest, { port });
+        const { requestLog } = await writeProxyConfig(paths, manifest, { port });
         const configChanged = (await readFile(paths.proxyConfig, "utf8")) !== oldConfig;
         if (configChanged && (await restartService(paths, options))) await waitForLiveProxy(paths);
         await writeClaudeWrapper(paths);
-        return { changed: false, configChanged, release, canary: null };
+        return { changed: false, configChanged, release, canary: null, requestLog };
       } catch (error) {
         await atomicWrite(paths.proxyConfig, oldConfig, 0o600).catch(() => {});
         await restartService(paths, options).catch(() => {});

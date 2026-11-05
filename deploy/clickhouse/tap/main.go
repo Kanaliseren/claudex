@@ -6,7 +6,7 @@
 // returns an empty result at once, which leaves requests and responses
 // untouched. A single goroutine writes the queue to the collector. When the
 // collector is missing or slow, events are dropped; the proxy never waits and
-// the queue never exceeds maxQueuedBytes. Redaction, parsing and storage all
+// its budget never exceeds maxPendingBytes. Redaction, parsing and storage all
 // happen in the collector process.
 //
 // Build: go build -buildmode=c-shared -o claudex-tap.so .

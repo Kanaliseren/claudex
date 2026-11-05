@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"os"
 	"regexp"
 	"strconv"
 	"sync"
@@ -19,9 +18,8 @@ const (
 	// maxPendingBytes bounds the tap's memory inside the proxy: payloads are
 	// counted from before they are copied until they are written or dropped.
 	maxPendingBytes = 64 << 20
-	// writeTimeout is shorter than shutdownWait, so the writer always exits
-	// before shutdown returns.
-	writeTimeout = time.Second
+	// shutdown closes the connection, which interrupts a write in progress.
+	writeTimeout = 5 * time.Second
 	shutdownWait = 3 * time.Second
 	dialTimeout  = time.Second
 )
@@ -62,6 +60,9 @@ var emptyResult = []byte(`{"ok":true,"result":{}}`)
 type event struct {
 	method  string
 	payload []byte
+	// lostBefore counts events dropped since the previous queued event; the
+	// collector is told just before this one, while their request is open.
+	lostBefore uint64
 }
 
 type tap struct {
@@ -69,8 +70,7 @@ type tap struct {
 	socket  string
 	queue   []event
 	pending int    // reserved bytes: copying, queued or being written
-	dropped uint64 // drops not yet reported to the proxy log
-	lost    uint64 // drops not yet announced to the collector
+	lost    uint64 // drops not yet attached to a queued event
 	closed  bool
 	running bool
 	conn    net.Conn
@@ -98,18 +98,11 @@ func (t *tap) reserve(n int) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if t.closed || t.pending+n > maxPendingBytes {
-		t.dropped++
 		t.lost++
 		return false
 	}
 	t.pending += n
 	return true
-}
-
-func (t *tap) release(n int) {
-	t.mu.Lock()
-	t.pending -= n
-	t.mu.Unlock()
 }
 
 // call never fails and never blocks on I/O: a plugin error would only add
@@ -121,7 +114,7 @@ func (t *tap) call(method string, payload []byte) []byte {
 	case method == "plugin.register" || method == "plugin.reconfigure":
 		return t.configure(payload)
 	case forwarded[method]:
-		t.push(event{method, payload})
+		t.push(event{method: method, payload: payload})
 	}
 	return emptyResult
 }
@@ -130,9 +123,11 @@ func (t *tap) push(ev event) {
 	t.mu.Lock()
 	if t.closed {
 		t.pending -= len(ev.payload)
+		t.lost++
 		t.mu.Unlock()
 		return
 	}
+	ev.lostBefore, t.lost = t.lost, 0
 	t.queue = append(t.queue, ev)
 	t.mu.Unlock()
 	select {
@@ -188,7 +183,7 @@ func (t *tap) configure(payload []byte) []byte {
 	// Lets the collector log which proxy schema it is serving.
 	hello := []byte(fmt.Sprintf(`{"schema_version":%d}`, version))
 	if t.reserve(len(hello)) {
-		t.push(event{"tap.hello", hello})
+		t.push(event{method: "tap.hello", payload: hello})
 	}
 
 	result := fmt.Sprintf(registration, version)
@@ -207,9 +202,10 @@ func (t *tap) run(stop, done chan struct{}) {
 		t.mu.Unlock()
 		close(done)
 	}()
+	// No stderr output: a blocked log pipe must never wedge the writer. Drops
+	// are reported by the collector instead.
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
-	lastReport := time.Now()
 	for {
 		select {
 		case <-stop:
@@ -218,35 +214,30 @@ func (t *tap) run(stop, done chan struct{}) {
 		case <-ticker.C:
 		}
 		t.flush()
-		if time.Since(lastReport) >= time.Minute {
-			lastReport = time.Now()
-			t.reportDrops()
-		}
 	}
 }
 
-// flush writes every queued event in order, after announcing earlier drops so
-// the collector can mark affected requests incomplete. On any error the
-// connection and the rest of the batch are dropped; the next tick reconnects.
+// flush writes every queued event in order, each preceded by an announcement
+// of the drops just before it. On any error the connection and the rest of
+// the batch are dropped (and counted); the next tick reconnects.
 func (t *tap) flush() {
 	t.mu.Lock()
-	batch, socket, conn, lost := t.queue, t.socket, t.conn, t.lost
+	batch, socket, conn := t.queue, t.socket, t.conn
 	t.queue = nil
 	t.mu.Unlock()
 	written := 0
 	defer func() {
 		_ = recover()
 		t.mu.Lock()
-		for _, ev := range batch {
+		for i, ev := range batch {
 			t.pending -= len(ev.payload)
-		}
-		if unsent := len(batch) - written; unsent > 0 {
-			t.dropped += uint64(unsent)
-			t.lost += uint64(unsent)
+			if i >= written {
+				t.lost += ev.lostBefore + 1
+			}
 		}
 		t.mu.Unlock()
 	}()
-	if len(batch) == 0 && lost == 0 {
+	if len(batch) == 0 {
 		return
 	}
 	if conn == nil && socket != "" {
@@ -265,16 +256,11 @@ func (t *tap) flush() {
 	if conn == nil {
 		return
 	}
-	if lost > 0 {
-		if writeFrame(conn, event{"tap.dropped", []byte(fmt.Sprintf(`{"events":%d}`, lost))}) != nil {
+	for _, ev := range batch {
+		if ev.lostBefore > 0 && writeFrame(conn, event{method: "tap.dropped", payload: []byte(fmt.Sprintf(`{"events":%d}`, ev.lostBefore))}) != nil {
 			t.disconnect(conn)
 			return
 		}
-		t.mu.Lock()
-		t.lost -= lost
-		t.mu.Unlock()
-	}
-	for _, ev := range batch {
 		if writeFrame(conn, ev) != nil {
 			t.disconnect(conn)
 			return
@@ -303,16 +289,6 @@ func writeFrame(conn net.Conn, ev event) error {
 	return err
 }
 
-func (t *tap) reportDrops() {
-	t.mu.Lock()
-	dropped := t.dropped
-	t.dropped = 0
-	t.mu.Unlock()
-	if dropped > 0 {
-		fmt.Fprintf(os.Stderr, "[claudex-tap] dropped %d events (collector unavailable or slow)\n", dropped)
-	}
-}
-
 // shutdown stops admission, releases queued payloads and stops the writer.
 // The host keeps unloaded libraries mapped, so nothing may stay referenced
 // and no goroutine may outlive this call.
@@ -321,6 +297,7 @@ func (t *tap) shutdown() {
 	t.closed = true
 	for _, ev := range t.queue {
 		t.pending -= len(ev.payload)
+		t.lost += ev.lostBefore + 1
 	}
 	t.queue = nil
 	running, stop, done, conn := t.running, t.stop, t.done, t.conn
@@ -328,7 +305,11 @@ func (t *tap) shutdown() {
 	if !running {
 		return
 	}
-	close(stop)
+	select {
+	case <-stop: // an earlier shutdown already stopped this writer
+	default:
+		close(stop)
+	}
 	if conn != nil {
 		_ = conn.Close() // interrupts a write in progress
 	}

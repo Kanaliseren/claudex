@@ -120,7 +120,12 @@ it would re-derive those requests from empty bodies and lose their messages.
   a secret with `\uXXXX` escapes.
 - A request whose capture is dropped (over a size cap, or while the collector
   is down) keeps no messages for that turn; requests that are entirely lost
-  leave no row at all, only the drop counts in the proxy and collector logs.
+  leave no row at all, only the drop counts in the collector log.
+- Memory in the proxy: before calling any plugin, CLIProxyAPI serializes and
+  copies each hook payload itself, so with the tap loaded the proxy briefly
+  holds about two extra copies of each in-flight request (measured on v8.0.56:
+  16 concurrent 3.6 MB requests peaked at 1,043 MiB versus 642 MiB without the
+  tap; released after each call). The tap's own memory is capped at 64 MiB.
 - CLIProxyAPI's own error logs (`<auth dir>/logs/error-*.log`) still contain
   unredacted request bodies; that is upstream behaviour, independent of this.
 - When the dashboard is enabled, CLIProxyAPI's management API can install

@@ -179,7 +179,10 @@ export async function main(argv = process.argv.slice(2), io = console) {
       return 0;
     }
     const result = await upgrade(paths, candidate, { binary: parsed.options.binary });
-    if (!result.changed) io.log(`Already on ${result.release.version} (${result.release.sha256.slice(0, 12)}).`);
+    if (!result.changed) {
+      io.log(`Already on ${result.release.version} (${result.release.sha256.slice(0, 12)}).`);
+      if (result.requestLog === "paused") io.log(`WARNING: request logging is paused. ${tapPausedHint}`);
+    }
     else {
       io.log(`Upgraded to ${result.release.version} (${result.release.sha256.slice(0, 12)}).`);
       io.log("Isolated canary: passed.");

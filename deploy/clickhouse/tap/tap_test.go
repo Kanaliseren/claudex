@@ -138,6 +138,7 @@ func TestDropsAreAnnouncedOnceTheCollectorReturns(t *testing.T) {
 	deliver(tp, "request.intercept_before", []byte(`{}`))
 	// Without a listener the batch (hello + event) is dropped and counted.
 	waitFor(t, func() bool { tp.mu.Lock(); defer tp.mu.Unlock(); return tp.lost >= 2 })
+	// Writing to stderr would risk blocking the writer; the tap never does.
 
 	ln, err := net.Listen("unix", socket)
 	if err != nil {
@@ -192,5 +193,30 @@ func waitFor(t *testing.T, ok func() bool) {
 			t.Fatal("condition not reached")
 		}
 		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestDoubleShutdownIsSafe(t *testing.T) {
+	tp := newTap()
+	register(t, tp, filepath.Join(t.TempDir(), "missing.sock"), 7)
+	tp.shutdown()
+	tp.shutdown()
+}
+
+func TestDropIsAnnouncedWhileItsRequestIsOpen(t *testing.T) {
+	socket, col := listen(t)
+	tp := newTap()
+	defer tp.shutdown()
+	register(t, tp, socket, 7)
+	if method, _ := col.next(t); method != "tap.hello" {
+		t.Fatalf("first frame = %s", method)
+	}
+	deliver(tp, "request.intercept_before", []byte(`{"RequestID":"r"}`))
+	deliver(tp, "response.intercept_stream_chunk", make([]byte, maxPendingBytes+1)) // dropped
+	deliver(tp, "request.complete", []byte(`{"RequestID":"r"}`))
+	for _, want := range []string{"request.intercept_before", "tap.dropped", "request.complete"} {
+		if method, _ := col.next(t); method != want {
+			t.Fatalf("frame = %s, want %s", method, want)
+		}
 	}
 }

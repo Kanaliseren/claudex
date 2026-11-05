@@ -460,7 +460,7 @@ index 30d3cd5..aa20728 100644
  	out := make([]string, 0, len(h))
  	for _, v := range h {
 diff --git a/plugins/clickhouse-sink/redact/redact.go b/plugins/clickhouse-sink/redact/redact.go
-index dfcf395..9b8adda 100644
+index dfcf395..5c11846 100644
 --- a/plugins/clickhouse-sink/redact/redact.go
 +++ b/plugins/clickhouse-sink/redact/redact.go
 @@ -31,7 +31,9 @@ const (
@@ -474,24 +474,40 @@ index dfcf395..9b8adda 100644
  	// RuleKnown names matches of configured secret values.
  	RuleKnown = "known"
  )
-@@ -63,6 +65,7 @@ type Redactor struct {
+@@ -63,6 +65,8 @@ type Redactor struct {
  	mtimes    map[string]time.Time
  	lastCheck time.Time
  	known     map[string]string // encoded form -> replacement
 +	failed    []string          // sources the last load could not read
++	loaded    bool              // a full load has run since Configure
  	disabled  map[string]bool
  
  	detector *detect.Detector
-@@ -204,7 +207,7 @@ func (r *Redactor) reloadIfStale(now time.Time) {
+@@ -90,6 +94,7 @@ func (r *Redactor) Configure(files, disabledRules []string) {
+ 	}
+ 	r.lastCheck = time.Time{}
+ 	r.mtimes = map[string]time.Time{}
++	r.loaded = false
+ 	r.mu.Unlock()
+ 	r.reloadIfStale(time.Now())
+ }
+@@ -204,9 +209,13 @@ func (r *Redactor) reloadIfStale(now time.Time) {
  	old := r.mtimes
  	r.mu.Unlock()
  
 -	paths := expandFiles(files)
 +	paths, failed := expandFiles(files)
  	mtimes := make(map[string]time.Time, len(paths))
- 	changed := len(paths) != len(old)
+-	changed := len(paths) != len(old)
++	// The first load, and any load with failed sources before or now, always
++	// runs in full, so Failed() can never report an unread source as fine.
++	r.mu.Lock()
++	changed := !r.loaded || len(failed) > 0 || len(r.failed) > 0 || len(paths) != len(old)
++	r.mu.Unlock()
  	for _, p := range paths {
-@@ -223,25 +226,52 @@ func (r *Redactor) reloadIfStale(now time.Time) {
+ 		info, errStat := os.Stat(p)
+ 		if errStat != nil {
+@@ -223,25 +232,53 @@ func (r *Redactor) reloadIfStale(now time.Time) {
  		r.mu.Unlock()
  		return
  	}
@@ -522,6 +538,7 @@ index dfcf395..9b8adda 100644
  	r.mu.Lock()
  	r.known = known
 +	r.failed = failed
++	r.loaded = true
  	r.mtimes = mtimes
  	r.lastCheck = now
  	r.mu.Unlock()
@@ -549,7 +566,7 @@ index dfcf395..9b8adda 100644
  			continue
  		}
  		if !info.IsDir() {
-@@ -250,6 +280,7 @@ func expandFiles(files []string) []string {
+@@ -250,6 +287,7 @@ func expandFiles(files []string) []string {
  		}
  		entries, errRead := os.ReadDir(f)
  		if errRead != nil {
@@ -557,7 +574,7 @@ index dfcf395..9b8adda 100644
  			continue
  		}
  		for _, e := range entries {
-@@ -259,7 +290,7 @@ func expandFiles(files []string) []string {
+@@ -259,7 +297,7 @@ func expandFiles(files []string) []string {
  		}
  	}
  	sort.Strings(out)
@@ -566,7 +583,7 @@ index dfcf395..9b8adda 100644
  }
  
  // addKnown registers a secret in the forms it can appear in a body: raw,
-@@ -282,25 +313,26 @@ func addKnown(known map[string]string, secret string) {
+@@ -282,25 +320,26 @@ func addKnown(known map[string]string, secret string) {
  
  // readSecrets extracts credentials from one file, chosen by its name:
  // .json and .yaml/.yml by key name, .env by value, anything else one per line.
@@ -599,7 +616,7 @@ index dfcf395..9b8adda 100644
  	case name == ".env" || strings.HasSuffix(name, ".env"):
  		var out []string
  		sc := bufio.NewScanner(bytes.NewReader(raw))
-@@ -313,7 +345,7 @@ func readSecrets(path string) []string {
+@@ -313,7 +352,7 @@ func readSecrets(path string) []string {
  				out = append(out, strings.Trim(strings.TrimSpace(value), `"'`))
  			}
  		}
@@ -608,7 +625,7 @@ index dfcf395..9b8adda 100644
  	default:
  		var out []string
  		sc := bufio.NewScanner(bytes.NewReader(raw))
-@@ -322,7 +354,7 @@ func readSecrets(path string) []string {
+@@ -322,7 +361,7 @@ func readSecrets(path string) []string {
  				out = append(out, line)
  			}
  		}
@@ -619,10 +636,10 @@ index dfcf395..9b8adda 100644
  
 diff --git a/plugins/clickhouse-sink/redact_fields_test.go b/plugins/clickhouse-sink/redact_fields_test.go
 new file mode 100644
-index 0000000..a1a2fac
+index 0000000..4968d12
 --- /dev/null
 +++ b/plugins/clickhouse-sink/redact_fields_test.go
-@@ -0,0 +1,77 @@
+@@ -0,0 +1,96 @@
 +package main
 +
 +import (
@@ -698,6 +715,25 @@ index 0000000..a1a2fac
 +	}
 +	if row := c.complete(completion{RequestID: "never-began"}); !strings.Contains(row.Error, lostNote) {
 +		t.Fatalf("row without a captured request not marked: %q", row.Error)
++	}
++}
++
++func TestMissingSecretSourcesAreReported(t *testing.T) {
++	missing := filepath.Join(t.TempDir(), "auth")
++	r, err := redact.New()
++	if err != nil {
++		t.Fatal(err)
++	}
++	r.Configure([]string{missing}, nil)
++	if failed := r.Failed(); len(failed) != 1 || failed[0] != missing {
++		t.Fatalf("Failed() = %v, want the missing directory", failed)
++	}
++	if err := os.Mkdir(missing, 0o700); err != nil {
++		t.Fatal(err)
++	}
++	r.Configure([]string{missing}, nil)
++	if failed := r.Failed(); len(failed) != 0 {
++		t.Fatalf("Failed() = %v once the directory exists", failed)
 +	}
 +}
 diff --git a/plugins/clickhouse-sink/schema.sql b/plugins/clickhouse-sink/schema.sql

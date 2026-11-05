@@ -21,7 +21,7 @@ test("systemd setup enables and restarts the service", async (t) => {
   const unit = await readFile(paths.systemdUnit, "utf8");
   assert.doesNotMatch(unit, /^WorkingDirectory=/m);
   // Plugins are copied into TMPDIR before loading, so it must not be the shared /tmp.
-  assert.ok(unit.includes(`\nEnvironment=TMPDIR="${paths.tmpDir}"\n`));
+  assert.ok(unit.includes(`\nEnvironment=TMPDIR="${paths.tmpDir.replaceAll("\\", "\\\\")}"\n`));
 
   assert.deepEqual(calls, [
     ["systemctl", "--user", "daemon-reload"],

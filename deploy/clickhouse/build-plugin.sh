@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Builds clickhouse-sink.so from the commit and Go image pinned in
-# channel/stable.json, runs its tests, and installs it next to the proxy
+# channel/stable.json plus clickhouse-sink.patch (hardening: capture size
+# limits, no redirects or env proxies, redacted usage source, no ClickHouse
+# error text in the proxy log), runs its tests, and installs it next to the proxy
 # binary. Linux only: the official proxy is glibc + cgo, and the Debian
 # bookworm builder links against an older glibc than the host, so the
 # library loads on newer distributions too.
@@ -22,6 +24,7 @@ work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 git -c advice.detachedHead=false clone -q --filter=blob:none --no-checkout "https://github.com/$repository.git" "$work/src"
 git -C "$work/src" checkout -q "$commit"
+git -C "$work/src" apply "$repo_root/deploy/clickhouse/clickhouse-sink.patch"
 mkdir -p "$work/out"
 
 # Fixed paths, -trimpath and an empty build ID make the output reproducible.

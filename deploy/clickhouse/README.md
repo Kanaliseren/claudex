@@ -7,7 +7,7 @@ pinned for `linux-x64` in `channel/stable.json`.
 
 | Part | What it is |
 |---|---|
-| `clickhouse-sink.so` | Third-party CLIProxyAPI plugin ([source](https://github.com/api-token/Cli-Proxy-API-Management-Center/tree/68c9bb8c701f2ed229e989a07f6d1ef1ec79da7a/plugins/clickhouse-sink)), pinned by commit and checksum. Runs inside the proxy, only observes traffic, redacts secrets, writes `requests` and `usage`. |
+| `clickhouse-sink.so` | Third-party CLIProxyAPI plugin ([source](https://github.com/api-token/Cli-Proxy-API-Management-Center/tree/68c9bb8c701f2ed229e989a07f6d1ef1ec79da7a/plugins/clickhouse-sink)), pinned by commit and checksum, built with `clickhouse-sink.patch`. Runs inside the proxy, only observes traffic, redacts secrets, writes `requests` and `usage`. |
 | `compose.yaml` | ClickHouse 26.8 LTS on `127.0.0.1:8123`, plus the plugin's deriver, which fills `request_facts` and the `messages` and `request_summary` views. The deriver has no network route except ClickHouse. |
 | `users.xml` | `claudex_writer` (plugin and deriver) and `claudex_reader` (read-only, 60 s / 20 MB / 4 GB limits). No password-less `default` user. |
 
@@ -59,8 +59,17 @@ curl -s -K <(printf 'user = "claudex_reader:%s"\n' "$(cat ~/.config/claudex/clic
 - A stream chunk that carries part of a split secret is stored as the redaction
   marker instead of its JSON, so the raw chunk list is not exact for those chunks.
 
+## Local patch
+
+`clickhouse-sink.patch` hardens the pinned plugin after review: each request's
+capture is capped at 64 MiB (512 MiB across in-flight requests; larger ones are
+stored as metadata only), the ClickHouse client ignores redirects and proxy
+environment variables, the usage `source` and `base_url` fields are redacted
+(`source` can fall back to the client API key), and ClickHouse error text, which
+can quote rejected rows, no longer reaches the proxy log.
+
 ## Upgrading the plugin
 
 Change `plugins["clickhouse-sink"].commit` (and the deriver Dockerfile's `ADD`
-line), review the diff, then run `build-plugin.sh --print-sha256` and record the
+line), review the diff, re-apply the patch, then run `build-plugin.sh --print-sha256` and record the
 checksum. claudex refuses to enable a library whose checksum does not match.

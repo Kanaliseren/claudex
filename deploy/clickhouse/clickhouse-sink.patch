@@ -1,0 +1,239 @@
+diff --git a/plugins/clickhouse-sink/capture.go b/plugins/clickhouse-sink/capture.go
+index 5da575b..1255aa3 100644
+--- a/plugins/clickhouse-sink/capture.go
++++ b/plugins/clickhouse-sink/capture.go
+@@ -164,6 +164,16 @@ type usageRow struct {
+ // that were in flight when the plugin was reloaded.
+ const pendingTTL = time.Hour
+ 
++// Captures live inside the proxy process, so their memory is bounded before
++// bytes are retained: one request keeps at most maxCaptureBytes and all
++// in-flight requests together at most maxPendingBytes. A request over either
++// limit is stored as metadata only, with droppedNote in its error.
++const (
++	maxCaptureBytes = 64 << 20
++	maxPendingBytes = 512 << 20
++	droppedNote     = "[clickhouse-sink: capture over size limit, bodies dropped]"
++)
++
+ type pending struct {
+ 	startedAt       time.Time
+ 	updatedAt       time.Time
+@@ -173,6 +183,8 @@ type pending struct {
+ 	responseHeaders http.Header
+ 	responseBody    []byte
+ 	chunks          []string
++	size            int
++	dropped         bool
+ }
+ 
+ // capture collects the request and response bodies of in-flight requests,
+@@ -181,6 +193,7 @@ type capture struct {
+ 	mu        sync.Mutex
+ 	bodies    bool
+ 	pending   map[string]*pending
++	total     int
+ 	lastSweep time.Time
+ }
+ 
+@@ -208,7 +221,10 @@ func (c *capture) begin(req interceptRequest, now time.Time) {
+ 	defer c.mu.Unlock()
+ 	c.sweepLocked(now)
+ 	entry := &pending{startedAt: now, updatedAt: now, path: metadataString(req.Metadata, "request_path")}
+-	if c.bodies {
++	if old := c.pending[req.RequestID]; old != nil {
++		c.total -= old.size
++	}
++	if c.bodies && c.retain(entry, len(req.Body)+headerSize(req.Headers)) {
+ 		entry.requestHeaders = req.Headers
+ 		entry.requestBody = req.Body
+ 	}
+@@ -223,6 +239,9 @@ func (c *capture) response(req responseRequest, now time.Time) {
+ 		return
+ 	}
+ 	entry.updatedAt = now
++	if !c.retain(entry, len(req.Body)+headerSize(req.ResponseHeaders)) {
++		return
++	}
+ 	entry.responseHeaders = req.ResponseHeaders
+ 	entry.responseBody = req.Body
+ }
+@@ -235,6 +254,9 @@ func (c *capture) chunk(req streamChunkRequest, now time.Time) {
+ 		return
+ 	}
+ 	entry.updatedAt = now
++	if !c.retain(entry, len(req.Body)+headerSize(req.ResponseHeaders)) {
++		return
++	}
+ 	if len(req.ResponseHeaders) > 0 {
+ 		entry.responseHeaders = req.ResponseHeaders
+ 	}
+@@ -252,6 +274,9 @@ func (c *capture) complete(ev completion) requestRow {
+ 	c.mu.Lock()
+ 	entry := c.pending[ev.RequestID]
+ 	delete(c.pending, ev.RequestID)
++	if entry != nil {
++		c.total -= entry.size
++	}
+ 	c.mu.Unlock()
+ 
+ 	row := requestRow{
+@@ -277,6 +302,9 @@ func (c *capture) complete(ev completion) requestRow {
+ 		if row.Path == "" {
+ 			row.Path = entry.path
+ 		}
++		if entry.dropped {
++			row.Error = strings.TrimSpace(row.Error + " " + droppedNote)
++		}
+ 	}
+ 	return row
+ }
+@@ -288,11 +316,42 @@ func (c *capture) sweepLocked(now time.Time) {
+ 	c.lastSweep = now
+ 	for id, entry := range c.pending {
+ 		if now.Sub(entry.updatedAt) > pendingTTL {
++			c.total -= entry.size
+ 			delete(c.pending, id)
+ 		}
+ 	}
+ }
+ 
++// retain accounts for n more bytes on entry and reports whether they may be
++// kept. Over a limit, the entry's bodies are released for good. Callers hold c.mu.
++func (c *capture) retain(entry *pending, n int) bool {
++	if entry.dropped {
++		return false
++	}
++	if entry.size+n <= maxCaptureBytes && c.total+n <= maxPendingBytes {
++		entry.size += n
++		c.total += n
++		return true
++	}
++	c.total -= entry.size
++	entry.size = 0
++	entry.dropped = true
++	entry.requestHeaders, entry.requestBody = nil, nil
++	entry.responseHeaders, entry.responseBody, entry.chunks = nil, nil, nil
++	return false
++}
++
++func headerSize(h http.Header) int {
++	n := 0
++	for name, values := range h {
++		n += len(name)
++		for _, v := range values {
++			n += len(v)
++		}
++	}
++	return n
++}
++
+ func (c *capture) size() int {
+ 	c.mu.Lock()
+ 	defer c.mu.Unlock()
+diff --git a/plugins/clickhouse-sink/capture_limit_test.go b/plugins/clickhouse-sink/capture_limit_test.go
+new file mode 100644
+index 0000000..716f9a8
+--- /dev/null
++++ b/plugins/clickhouse-sink/capture_limit_test.go
+@@ -0,0 +1,29 @@
++package main
++
++import (
++	"strings"
++	"testing"
++	"time"
++)
++
++func TestCaptureOverLimitKeepsMetadataOnly(t *testing.T) {
++	c := newCapture()
++	now := time.Now()
++	c.begin(interceptRequest{RequestID: "r1", Body: []byte("hello")}, now)
++	chunk := []byte(strings.Repeat("x", 1<<20))
++	for i := 0; i <= maxCaptureBytes>>20; i++ {
++		c.chunk(streamChunkRequest{RequestID: "r1", Body: chunk, ChunkIndex: i}, now)
++	}
++	row := c.complete(completion{RequestID: "r1", Model: "m"})
++	if row.RequestBody != "" || len(row.ResponseChunks) != 0 || !strings.Contains(row.Error, droppedNote) {
++		t.Fatalf("over-limit capture kept bodies: body=%d chunks=%d error=%q", len(row.RequestBody), len(row.ResponseChunks), row.Error)
++	}
++	if c.total != 0 {
++		t.Fatalf("pending bytes not released: %d", c.total)
++	}
++
++	c.begin(interceptRequest{RequestID: "r2", Body: []byte("small")}, now)
++	if row := c.complete(completion{RequestID: "r2"}); row.RequestBody != "small" || row.Error != "" {
++		t.Fatalf("small capture changed: %+v", row)
++	}
++}
+diff --git a/plugins/clickhouse-sink/redact.go b/plugins/clickhouse-sink/redact.go
+index 30d3cd5..5e19fef 100644
+--- a/plugins/clickhouse-sink/redact.go
++++ b/plugins/clickhouse-sink/redact.go
+@@ -44,19 +44,23 @@ func failClosed(row *requestRow) {
+ 
+ // redactUsage redacts the free-text fields of a usage row in place.
+ func redactUsage(r *redact.Redactor, row *usageRow) {
++	// Source falls back to the client API key for credentials without an
++	// account label, and BaseURL can carry a key, so both are redacted too.
+ 	defer func() {
+ 		if recover() != nil {
+-			row.FailureBody, row.ResponseHeaders = "", nil
++			row.FailureBody, row.ResponseHeaders, row.Source, row.BaseURL = "", nil, "", ""
+ 		}
+ 	}()
+ 	if r == nil {
+-		row.FailureBody, row.ResponseHeaders = "", nil
++		row.FailureBody, row.ResponseHeaders, row.Source, row.BaseURL = "", nil, "", ""
+ 		return
+ 	}
+-	texts := append([]string{row.FailureBody}, headerValues(row.ResponseHeaders)...)
++	texts := append([]string{row.FailureBody, row.Source, row.BaseURL}, headerValues(row.ResponseHeaders)...)
+ 	rep := r.NewReplacer(texts)
+ 	res := redact.NewResult()
+ 	row.FailureBody = rep.Apply(row.FailureBody, res)
++	row.Source = rep.Apply(row.Source, res)
++	row.BaseURL = rep.Apply(row.BaseURL, res)
+ 	redactHeaders(rep, row.ResponseHeaders, res)
+ }
+ 
+diff --git a/plugins/clickhouse-sink/sink.go b/plugins/clickhouse-sink/sink.go
+index 7fa53f2..d02effa 100644
+--- a/plugins/clickhouse-sink/sink.go
++++ b/plugins/clickhouse-sink/sink.go
+@@ -96,7 +96,13 @@ func newSink(cfg sinkConfig) *sink {
+ 	return &sink{
+ 		cfg:     cfg,
+ 		pending: make(map[string][][]byte),
+-		client:  &http.Client{Timeout: httpTimeout},
++		// Rows and the password go only to the configured URL: no redirects,
++		// no proxy from the environment.
++		client: &http.Client{
++			Timeout:       httpTimeout,
++			Transport:     &http.Transport{Proxy: nil},
++			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
++		},
+ 		kick:    make(chan struct{}, 1),
+ 	}
+ }
+@@ -315,12 +321,18 @@ func (s *sink) exec(cfg sinkConfig, params url.Values, body string) error {
+ 	}
+ 	resp, errDo := s.client.Do(req)
+ 	if errDo != nil {
++		// The error text repeats the URL, which holds the query; keep only the cause.
++		var urlErr *url.Error
++		if errors.As(errDo, &urlErr) {
++			return fmt.Errorf("ClickHouse request failed: %w", urlErr.Err)
++		}
+ 		return errDo
+ 	}
+ 	defer func() { _ = resp.Body.Close() }()
+ 	if resp.StatusCode != http.StatusOK {
+-		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+-		return httpError{status: resp.StatusCode, msg: fmt.Sprintf("ClickHouse %s: %s", resp.Status, strings.TrimSpace(string(msg)))}
++		// Error text can quote the rejected rows, so only the code reaches the log.
++		code := resp.Header.Get("X-ClickHouse-Exception-Code")
++		return httpError{status: resp.StatusCode, msg: fmt.Sprintf("ClickHouse %s: exception code %q", resp.Status, code)}
+ 	}
+ 	// ClickHouse can report an error after a 200 header; only a fully read
+ 	// body counts as success.

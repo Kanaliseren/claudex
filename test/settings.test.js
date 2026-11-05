@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { configure, dashboardSummary } from "../src/settings.js";
 import { readProxyKey, readProxyOptions, readProxySummary, writeProxyConfig } from "../src/config.js";
 import { platformKey, resolvePaths } from "../src/paths.js";
+import { checkUpdate } from "../src/update-check.js";
 import { fixtureManifest, temporaryRoot } from "../test-support/helpers.js";
 
 test("dashboard and sticky routing survive regeneration and upstream key hashing", async (t) => {
@@ -55,8 +56,10 @@ test("ClickHouse logging renders the pinned sink with file-based secrets and sur
   const root = await temporaryRoot(t);
   const paths = resolvePaths({ env: { CLAUDEX_HOME: root }, home: root });
   const library = Buffer.from("reviewed build");
+  const fixture = fixtureManifest();
   const manifest = {
-    ...fixtureManifest(),
+    ...fixture,
+    proxy: { ...fixture.proxy, assets: { [platformKey()]: { url: "https://example.invalid/proxy", sha256: "0".repeat(64) } } },
     plugins: { "clickhouse-sink": { assets: { [platformKey()]: { sha256: createHash("sha256").update(library).digest("hex") } } } },
   };
   await writeProxyConfig(paths, manifest);
@@ -90,6 +93,7 @@ plugins:
         - ${JSON.stringify(paths.authDir)}
 `));
   assert.deepEqual((await readProxyOptions(paths.proxyConfig)).clickhouse, clickhouse);
+  assert.equal((await checkUpdate(paths, manifest)).configMatchesChannel, true);
 
   await configure(paths, manifest, { clickhouse: null });
   assert.doesNotMatch(await readFile(paths.proxyConfig, "utf8"), /plugins:|pw-from-file/);

@@ -40,7 +40,10 @@ if [[ "$sha" != "$recorded" ]]; then
   exit 1
 fi
 
-dest="${XDG_DATA_HOME:-$HOME/.local/share}/claudex/plugins"
+dest=$(node --input-type=module -e '
+  const { resolvePaths } = await import(process.argv[1]);
+  console.log(resolvePaths().pluginsDir);
+' "$repo_root/src/paths.js")
 install -d -m 700 "$dest"
 install -m 644 "$work/out/clickhouse-sink.so" "$dest/clickhouse-sink.so.tmp"
 mv "$dest/clickhouse-sink.so.tmp" "$dest/clickhouse-sink.so"

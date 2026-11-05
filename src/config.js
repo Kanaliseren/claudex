@@ -6,11 +6,16 @@ export async function writeProxyConfig(paths, manifest, { port = 8317, ...overri
   if (await exists(paths.proxyConfig)) {
     proxyKey = await readProxyKey(paths.proxyConfig);
   }
-  const options = { ...(await readProxyOptions(paths.proxyConfig)), ...overrides };
-  const clickhousePassword = options.clickhouse ? await readClickhousePassword(paths.clickhousePassword) : "";
-  const yaml = renderProxyConfig({ paths, manifest, port, proxyKey, ...options, clickhousePassword });
+  const yaml = renderProxyConfig({ paths, manifest, port, proxyKey, ...(await renderOptions(paths, overrides)) });
   await atomicWrite(paths.proxyConfig, yaml, 0o600);
   return { proxyKey, port };
+}
+
+// The stored choices plus the secrets that live in their own files.
+export async function renderOptions(paths, overrides = {}) {
+  const options = { ...(await readProxyOptions(paths.proxyConfig)), ...overrides };
+  const clickhousePassword = options.clickhouse ? await readClickhousePassword(paths.clickhousePassword) : "";
+  return { ...options, clickhousePassword };
 }
 
 export const clickhouseWriter = "claudex_writer";
@@ -23,7 +28,8 @@ async function readClickhousePassword(path) {
     throw new Error(`ClickHouse password file must be owner-only (chmod 600): ${path}`);
   }
   const password = (await readFile(path, "utf8")).trim();
-  if (!password) throw new Error(`ClickHouse password file is empty: ${path}`);
+  // The plugin only redacts known values of 12 or more characters.
+  if (password.length < 12) throw new Error(`ClickHouse password must be at least 12 characters: ${path}`);
   return password;
 }
 

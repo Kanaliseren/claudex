@@ -15,10 +15,9 @@ pinned for `linux-x64` in `channel/stable.json`.
 
 ```sh
 # 1. Passwords: owner-only files, never in the repo.
-cd ~/.config/claudex
-for f in clickhouse-password clickhouse-reader-password; do
+(cd ~/.config/claudex && for f in clickhouse-password clickhouse-reader-password; do
   [ -e "$f" ] || (umask 077; head -c 32 /dev/urandom | base64 | tr -d '/+=\n' > "$f")
-done
+done)
 
 # 2. ClickHouse and the deriver (from this directory).
 CLAUDEX_UID=$(id -u) CLAUDEX_GID=$(id -g) docker compose up -d --build
@@ -31,7 +30,9 @@ CLAUDEX_UID=$(id -u) CLAUDEX_GID=$(id -g) docker compose up -d --build
 claudex configure --clickhouse http://127.0.0.1:8123
 ```
 
-`claudex configure --no-clickhouse` turns it off again. Both passwords sit in
+`claudex configure --no-clickhouse` turns it off again. The stack uses the
+`cliproxy` database; `--clickhouse-database NAME` also needs the grants in
+`users.xml` and the deriver's `CLICKHOUSE_DB` changed to match. Both passwords sit in
 the claudex config directory, which the plugin and the deriver read for
 redaction, so they are redacted like the OAuth tokens.
 

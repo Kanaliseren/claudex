@@ -225,17 +225,10 @@ func (t *tap) flush() {
 	batch, socket, conn := t.queue, t.socket, t.conn
 	t.queue = nil
 	t.mu.Unlock()
-	written := 0
+	written, announced := 0, false
 	defer func() {
 		_ = recover()
-		t.mu.Lock()
-		for i, ev := range batch {
-			t.pending -= len(ev.payload)
-			if i >= written {
-				t.lost += ev.lostBefore + 1
-			}
-		}
-		t.mu.Unlock()
+		t.settle(batch, written, announced)
 	}()
 	if len(batch) == 0 {
 		return
@@ -257,15 +250,47 @@ func (t *tap) flush() {
 		return
 	}
 	for _, ev := range batch {
-		if ev.lostBefore > 0 && writeFrame(conn, event{method: "tap.dropped", payload: []byte(fmt.Sprintf(`{"events":%d}`, ev.lostBefore))}) != nil {
-			t.disconnect(conn)
-			return
+		announced = false
+		if ev.lostBefore > 0 {
+			if writeFrame(conn, event{method: "tap.dropped", payload: []byte(fmt.Sprintf(`{"events":%d}`, ev.lostBefore))}) != nil {
+				t.disconnect(conn)
+				return
+			}
+			announced = true
 		}
 		if writeFrame(conn, ev) != nil {
 			t.disconnect(conn)
 			return
 		}
 		written++
+	}
+}
+
+// settle releases a flushed batch's bytes and counts what was not written.
+// Those losses are attached to the first event queued meanwhile, so the
+// collector hears about them before that event (say, the completion of the
+// request that lost a chunk); a notice already sent is not counted again.
+func (t *tap) settle(batch []event, written int, announced bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	var lost uint64
+	for i, ev := range batch {
+		t.pending -= len(ev.payload)
+		if i < written {
+			continue
+		}
+		lost++
+		if i > written || !announced {
+			lost += ev.lostBefore
+		}
+	}
+	if lost == 0 {
+		return
+	}
+	if len(t.queue) > 0 {
+		t.queue[0].lostBefore += lost
+	} else {
+		t.lost += lost
 	}
 }
 
@@ -301,14 +326,16 @@ func (t *tap) shutdown() {
 	}
 	t.queue = nil
 	running, stop, done, conn := t.running, t.stop, t.done, t.conn
+	if running {
+		select {
+		case <-stop: // an earlier shutdown already stopped this writer
+		default:
+			close(stop) // under the lock, so concurrent shutdowns close once
+		}
+	}
 	t.mu.Unlock()
 	if !running {
 		return
-	}
-	select {
-	case <-stop: // an earlier shutdown already stopped this writer
-	default:
-		close(stop)
 	}
 	if conn != nil {
 		_ = conn.Close() // interrupts a write in progress

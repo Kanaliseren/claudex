@@ -220,3 +220,23 @@ func TestDropIsAnnouncedWhileItsRequestIsOpen(t *testing.T) {
 		}
 	}
 }
+
+func TestWriteFailureIsAnnouncedBeforeEventsQueuedMeanwhile(t *testing.T) {
+	tp := newTap()
+	chunk := event{method: "response.intercept_stream_chunk", payload: []byte("x"), lostBefore: 2}
+	tp.pending = len(chunk.payload)
+	// The completion arrives while the chunk's write is failing.
+	if !tp.reserve(1) {
+		t.Fatal("reserve refused")
+	}
+	tp.push(event{method: "request.complete", payload: []byte("y")})
+
+	tp.settle([]event{chunk}, 0, true) // the drop notice went out, the chunk did not
+	if got := tp.queue[0].lostBefore; got != 1 {
+		t.Fatalf("completion carries %d lost events, want 1 (the chunk; its notice was sent)", got)
+	}
+	tp.settle(nil, 0, false)
+	if tp.lost != 0 || tp.pending != 1 {
+		t.Fatalf("lost %d pending %d", tp.lost, tp.pending)
+	}
+}

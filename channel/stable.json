@@ -2,51 +2,51 @@
   "schemaVersion": 1,
   "channel": "stable",
   "proxy": {
-    "version": "v8.0.28",
-    "upstreamVersion": "v8.0.28",
+    "version": "v8.0.56",
+    "upstreamVersion": "v8.0.56",
     "repository": "router-for-me/CLIProxyAPI",
-    "commit": "0d18d3b365be000eeaee7de4615f9da596b2059d",
-    "tag": "v8.0.28",
+    "commit": "585f97deac9aa57c700301221fb1a7085e1827cc",
+    "tag": "v8.0.56",
     "assets": {
       "linux-x64": {
-        "url": "https://github.com/router-for-me/CLIProxyAPI/releases/download/v8.0.28/CLIProxyAPI_8.0.28_linux_amd64.tar.gz",
+        "url": "https://github.com/router-for-me/CLIProxyAPI/releases/download/v8.0.56/CLIProxyAPI_8.0.56_linux_amd64.tar.gz",
         "compression": "tar.gz",
         "executable": "cli-proxy-api",
-        "archiveSha256": "1644171946913c858842081053abb6f67234bb41ce2691602bf834361293c17f",
-        "archiveBytes": 23374847,
-        "sha256": "733b966c79e9a3052476db3ccf0e9adc2e4310b77e11de315b3d66a0fee5dda4"
+        "archiveSha256": "6f313dfdfbb62154de97a446cfc47d5a3419723484ea9f3bc1fb0a3015d195e7",
+        "archiveBytes": 25263955,
+        "sha256": "0aa3798effa9a387feba232ef5306d159b0b7312a4a70abd794a7ba6e1e5c079"
       },
       "linux-arm64": {
-        "url": "https://github.com/router-for-me/CLIProxyAPI/releases/download/v8.0.28/CLIProxyAPI_8.0.28_linux_aarch64.tar.gz",
+        "url": "https://github.com/router-for-me/CLIProxyAPI/releases/download/v8.0.56/CLIProxyAPI_8.0.56_linux_aarch64.tar.gz",
         "compression": "tar.gz",
         "executable": "cli-proxy-api",
-        "archiveSha256": "b1956286131e7295d5d0347dc1caff96d2135813b2af0fdb82c3b00119abfa3a",
-        "archiveBytes": 21067959,
-        "sha256": "f3f94ee1237def044595c49e1bdb04f22826517565b3feb9601f1795762a6e27"
+        "archiveSha256": "1bbe291232849f1707630d817d70c994cd1e9da40c070035b52d113683557f68",
+        "archiveBytes": 22766858,
+        "sha256": "a953a71f094676e1df8289e5cc86c5d77578c794754b517544d6c5cbde1069a5"
       },
       "darwin-x64": {
-        "url": "https://github.com/router-for-me/CLIProxyAPI/releases/download/v8.0.28/CLIProxyAPI_8.0.28_darwin_amd64.tar.gz",
+        "url": "https://github.com/router-for-me/CLIProxyAPI/releases/download/v8.0.56/CLIProxyAPI_8.0.56_darwin_amd64.tar.gz",
         "compression": "tar.gz",
         "executable": "cli-proxy-api",
-        "archiveSha256": "619e6892b56832d964d989e5be4a23e2277b22e39c160de7ba3ca60d66b2c5fd",
-        "archiveBytes": 23334360,
-        "sha256": "e4f0abd2206c7a1a99f52170a137723f2ff1dd160a9c7e003368c5d1e3b06281"
+        "archiveSha256": "68a40da80b87c8e4d4e66453e04a44183767ea593e1070661ed92e3855558b51",
+        "archiveBytes": 25217133,
+        "sha256": "69a0625c41708c9a6cdeda0750e0e3fafdc13e89b791e0da9ae08ee6f66dda51"
       },
       "darwin-arm64": {
-        "url": "https://github.com/router-for-me/CLIProxyAPI/releases/download/v8.0.28/CLIProxyAPI_8.0.28_darwin_aarch64.tar.gz",
+        "url": "https://github.com/router-for-me/CLIProxyAPI/releases/download/v8.0.56/CLIProxyAPI_8.0.56_darwin_aarch64.tar.gz",
         "compression": "tar.gz",
         "executable": "cli-proxy-api",
-        "archiveSha256": "b70932382334e5388dc25265078cbcdf2e951b3b5fa7cd23d8ab3efb0a9fceef",
-        "archiveBytes": 21544072,
-        "sha256": "c08a9ccc4c5ec86b30920bf2b3344be3ea26e94d2bd224dce0bd3631b42f0049"
+        "archiveSha256": "356bb4c64d3ef0238192481be1d0efde6d495bba74bdefe60badbc5dce698799",
+        "archiveBytes": 23272204,
+        "sha256": "12dfcec8bc6a2e4ce959dfff1030e8c322e4222cb2be0cb17a51da34f4760dd7"
       },
       "win32-x64": {
-        "url": "https://github.com/router-for-me/CLIProxyAPI/releases/download/v8.0.28/CLIProxyAPI_8.0.28_windows_amd64.zip",
+        "url": "https://github.com/router-for-me/CLIProxyAPI/releases/download/v8.0.56/CLIProxyAPI_8.0.56_windows_amd64.zip",
         "compression": "zip",
         "executable": "cli-proxy-api.exe",
-        "archiveSha256": "c4a4466c23ae0493ea2db784334bfeb2ed19b00514b90241fd49e0d858a9f935",
-        "archiveBytes": 23665792,
-        "sha256": "bfac9d0f80b1a82e03c7a6f1d55c938e223f3fa20a663eea51593a09fcf67dec"
+        "archiveSha256": "2a6f081fbafacfe1f1c05e1960612011ccc8bacd9b74a6ac7104b65c03b1bb5f",
+        "archiveBytes": 25540036,
+        "sha256": "5058ad7f5623febfe91d255d044a1d4efe24b19ce09c653e2852755007c4328e"
       }
     }
   },

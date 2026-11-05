@@ -111,12 +111,11 @@ it would re-derive those requests from empty bodies and lose their messages.
   completion whose request never arrived;
 - the collector only accepts the tap's methods and waits for a complete secret
   set before listening;
-- speed: gitleaks scans text in ~8 KB content-defined segments (with 8 KB
-  overlap, so secrets crossing a cut are still found) and caches findings per
-  segment, so history an agent resends every turn is scanned once. A real
-  2 MB request took 5.3 s before, 1.7 s on first sight and ~5 ms after.
-  Finished requests are redacted on a worker pool, so the socket reader never
-  stalls.
+- speed: gitleaks runs on RE2 (`gore2regex`, its supported alternative
+  engine; same rules, whole text), so a real 2 MB agent request takes ~0.25 s
+  instead of 5.3 s. Finished requests are redacted on workers holding at most
+  256 MiB of rows, so the socket reader does not stall; shutdown stops
+  reading, drains the workers, then flushes.
 
 ## What is not covered
 

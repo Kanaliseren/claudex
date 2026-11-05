@@ -7,8 +7,10 @@ COPY clickhouse-sink.patch /tmp/
 WORKDIR /src
 RUN git apply /tmp/clickhouse-sink.patch
 WORKDIR /src/plugins/clickhouse-sink
-RUN CGO_ENABLED=0 go build -tags collector -trimpath -ldflags="-s -w" -o /out/collector . \
- && cd deriver && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/deriver .
+# gore2regex makes gitleaks use RE2 (its supported alternative engine): same
+# rules, ~20x faster on 2 MB agent requests than Go's regexp.
+RUN CGO_ENABLED=0 go build -tags "collector gore2regex" -trimpath -ldflags="-s -w" -o /out/collector . \
+ && cd deriver && CGO_ENABLED=0 go build -tags gore2regex -trimpath -ldflags="-s -w" -o /out/deriver .
 
 # The debug variant adds busybox, used only to read the password file.
 FROM gcr.io/distroless/static-debian12:debug-nonroot@sha256:d5563cc7f2f44313f332e91138cc8c6a158899afeeeab2fce3b0f9ccdb3cf9ee

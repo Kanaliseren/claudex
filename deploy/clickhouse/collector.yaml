@@ -1,0 +1,11 @@
+# clickhouse-sink settings for the collector. The password comes from the
+# CLICKHOUSE_PASSWORD environment variable, set from a compose secret.
+url: "http://clickhouse:8123"
+database: "cliproxy"
+username: "claudex_writer"
+store-bodies: true
+# Every secret in these is replaced before a row is stored: the proxy key,
+# dashboard key and ClickHouse passwords (config dir) and the OAuth tokens.
+redact-files:
+  - "/redact/config"
+  - "/redact/auth"

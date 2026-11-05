@@ -1,6 +1,21 @@
-# Local ClickHouse for claudex request logging, plus the deriver that turns raw
-# rows into searchable tables. See README.md in this directory.
+# Local ClickHouse for claudex request logging: the collector that receives
+# claudex-tap's events, ClickHouse, and the deriver that makes rows
+# searchable. See README.md in this directory.
 name: claudex-clickhouse
+
+x-sink: &sink
+  build:
+    context: .
+    dockerfile: sink.Dockerfile
+  image: claudex-clickhouse-sink:68c9bb8
+  restart: unless-stopped
+  depends_on: [clickhouse]
+  # The host user, so the owner-only secret files and the tap socket are
+  # readable; the internal network gives no route out except ClickHouse.
+  user: "${CLAUDEX_UID:-1000}:${CLAUDEX_GID:-1000}"
+  secrets: [clickhouse_writer]
+  networks: [internal]
+  read_only: true
 
 services:
   clickhouse:
@@ -29,16 +44,27 @@ services:
       nofile: { soft: 262144, hard: 262144 }
     mem_limit: 8g
 
+  # Receives claudex-tap's events on a unix socket, redacts them and writes the
+  # raw tables. It runs here, not in the proxy, so a crash or overload only
+  # loses log rows.
+  collector:
+    <<: *sink
+    entrypoint:
+      - /busybox/sh
+      - -c
+      - CLICKHOUSE_PASSWORD="$$(cat /run/secrets/clickhouse_writer)" exec /collector
+    environment:
+      TAP_SOCKET: /tap/tap.sock
+      SINK_CONFIG: /etc/claudex/collector.yaml
+    volumes:
+      - ${HOME}/.local/state/claudex/tap:/tap
+      - ./collector.yaml:/etc/claudex/collector.yaml:ro
+      - ${HOME}/.config/claudex:/redact/config:ro
+      - ${HOME}/.local/state/claudex/auth:/redact/auth:ro
+    mem_limit: 2g
+
   deriver:
-    build:
-      context: .
-      dockerfile: deriver.Dockerfile
-    image: claudex-clickhouse-deriver:68c9bb8
-    restart: unless-stopped
-    depends_on: [clickhouse]
-    # Runs as the host user so it can read the owner-only secret files it
-    # redacts with; the internal network gives it no route out.
-    user: "${CLAUDEX_UID:-1000}:${CLAUDEX_GID:-1000}"
+    <<: *sink
     entrypoint:
       - /busybox/sh
       - -c
@@ -49,11 +75,10 @@ services:
       CLICKHOUSE_USER: claudex_writer
       CLICKHOUSE_DB: cliproxy
       REDACT_FILES: /redact/config,/redact/auth
-    secrets: [clickhouse_writer]
     volumes:
       - ${HOME}/.config/claudex:/redact/config:ro
       - ${HOME}/.local/state/claudex/auth:/redact/auth:ro
-    networks: [internal]
+    mem_limit: 1g
 
 secrets:
   clickhouse_writer:

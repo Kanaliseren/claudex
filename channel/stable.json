@@ -68,14 +68,12 @@
     }
   },
   "plugins": {
-    "clickhouse-sink": {
-      "repository": "api-token/Cli-Proxy-API-Management-Center",
-      "commit": "68c9bb8c701f2ed229e989a07f6d1ef1ec79da7a",
-      "path": "plugins/clickhouse-sink",
+    "claudex-tap": {
+      "source": "deploy/clickhouse/tap",
       "builder": "golang:1.26-bookworm@sha256:29f741a2adcfacecf72c6f1f8275fad87a33d4080a459b71dffebf1b324abd8b",
       "assets": {
         "linux-x64": {
-          "sha256": "c64a15be6886f514f5263f68838a5b2dab2b4d729fbe79be3f3f054cb68b0b3c"
+          "sha256": "faf587f674f326e4320a1dc172aa9e5ed3141f3bf4b1766a380e2cf51883dcf1"
         }
       }
     }

@@ -226,54 +226,8 @@ Claude models use Claude accounts; Codex accounts serve Codex models.
 
 ## Request logging (optional)
 
-`claudex configure --clickhouse URL` stores every proxied request and response,
-with secrets redacted, in a local ClickHouse you can search later. It is off by
-default and needs the pinned plugin build; setup is in the repository's
+`claudex configure --request-log` stores every proxied request and response,
+with secrets redacted, in a local ClickHouse you can search later. A tiny
+copy-only plugin hands traffic to a separate collector, so the proxy never
+changes or waits on it. It is off by default; setup is in the repository's
 `deploy/clickhouse/README.md`.
-`--no-session-affinity` disables session binding. Claudex preserves these supported
-settings across setup and updates; arbitrary edits in the panel's YAML editor
-are not preserved by Claudex configuration regeneration.
-
-### Use the quota that expires first
-
-With two or more accounts from the same provider (Claude or Codex), the installed
-quota adapter (`claudex hub --install`) routes new work to the account whose weekly
-window resets soonest, because that quota is lost first if unused. Every five
-minutes it reads each account's weekly reset and sets CLIProxyAPI's built-in
-per-account `priority` (the highest priority is used first). Accounts without a
-running weekly window come after accounts with one, followed by exhausted
-accounts and accounts whose credentials are rejected. The proxy's own cooldown handles 5-hour and weekly 429s by
-failing over to the next priority until the limit resets.
-
-Reset times come from recent model-response headers when available, otherwise
-from the provider usage endpoint, reused for up to 30 minutes. Lower-priority
-accounts sit idle and have no recent headers, so when the usage endpoint is
-throttled and an account's reset is not yet known, the adapter sends the same
-one-output-token Haiku probe the dashboard uses, once until that reset is known.
-Probing an unused account starts its weekly window. If an account's usage is
-still unreadable, or no reset is known, that provider's priorities stay
-unchanged until a later pass. With session
-affinity, existing conversations stay on their account until the binding expires
-(one hour) or that account fails; new conversations use the new order. The adapter
-owns `priority` for these providers, so manual priorities are replaced. Set
-`"expiryRouting": false` in `quota-hub.json` and restart the hub to disable it.
-
-## Opus 5.5
-
-Opus 5.5 uses native Claude OAuth through CLIProxyAPI, without a model alias or
-payload workaround.
-
-`claudex run opus55` selects `claude-opus-5-5`; `claudex run opus` keeps Opus 5.
-`claudex integrate t3` registers both models without changing the default.
-
-```bash
-claudex update
-claudex integrate t3
-claudex doctor --live
-claudex run opus55
-```
-
-Updating regenerates the managed proxy configuration and removes the temporary
-Opus 5.5 alias/payload workaround. Native support no longer needs that override.
-Run updates during an idle window: activating a new proxy restarts the shared
-service and can interrupt requests from every connected user.

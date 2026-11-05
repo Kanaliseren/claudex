@@ -6,7 +6,7 @@ import { login, rollback, setup, upgrade } from "./lifecycle.js";
 import { runClaude } from "./wrapper.js";
 import { checkUpdate } from "./update-check.js";
 import { prepareUpstreamManifest } from "./promotion.js";
-import { parseClickhouseOptions, readQuotaHubConfig } from "./config.js";
+import { readQuotaHubConfig } from "./config.js";
 import { configure, dashboardSummary } from "./settings.js";
 import { assertOwnedProxy, connectSharedFile } from "./shared.js";
 import { installQuotaHub } from "./hub.js";
@@ -56,16 +56,13 @@ export async function main(argv = process.argv.slice(2), io = console) {
     rejectPositionals(parsed, command);
     if (parsed.options.dashboard && parsed.options.noDashboard) throw new Error("choose --dashboard or --no-dashboard");
     if (parsed.options.sessionAffinity && parsed.options.noSessionAffinity) throw new Error("choose one session-affinity option");
-    if (parsed.options.clickhouse && parsed.options.noClickhouse) throw new Error("choose --clickhouse or --no-clickhouse");
-    if (parsed.options.clickhouseDatabase && !parsed.options.clickhouse) throw new Error("--clickhouse-database requires --clickhouse");
+    if (parsed.options.requestLog && parsed.options.noRequestLog) throw new Error("choose --request-log or --no-request-log");
     const settings = command === "configure"
       ? await configure(paths, manifest, {
         dashboard: parsed.options.dashboard ? true : parsed.options.noDashboard ? false : undefined,
         sessionAffinity: parsed.options.sessionAffinity ? true : parsed.options.noSessionAffinity ? false : undefined,
         strategy: parsed.options.strategy,
-        clickhouse: parsed.options.clickhouse
-          ? parseClickhouseOptions(parsed.options.clickhouse, parsed.options.clickhouseDatabase)
-          : parsed.options.noClickhouse ? null : undefined,
+        requestLog: parsed.options.requestLog ? true : parsed.options.noRequestLog ? false : undefined,
       })
       : await dashboardSummary(paths);
     if (parsed.options.json) io.log(JSON.stringify(settings, null, 2));
@@ -73,7 +70,7 @@ export async function main(argv = process.argv.slice(2), io = console) {
       io.log(`Dashboard: ${settings.enabled ? settings.url : "disabled"}`);
       if (settings.enabled) io.log(`Management key file (keep private): ${settings.keyFile}`);
       io.log(`Routing: ${settings.strategy}; session affinity: ${settings.sessionAffinity ? "enabled" : "disabled"}`);
-      io.log(`ClickHouse logging: ${settings.clickhouse ? `${settings.clickhouse.url} (${settings.clickhouse.database})` : "disabled"}`);
+      io.log(`Request logging: ${settings.requestLog ? "enabled" : "disabled"}`);
       if (settings.restarted === false) io.log("Restart the foreground proxy to apply these settings.");
     }
     return 0;
@@ -185,6 +182,10 @@ export async function main(argv = process.argv.slice(2), io = console) {
     else {
       io.log(`Upgraded to ${result.release.version} (${result.release.sha256.slice(0, 12)}).`);
       io.log("Isolated canary: passed.");
+      if (result.canary?.requestLog === "ok") io.log("Request logging: the new proxy loads claudex-tap.");
+      if (result.canary?.requestLog === "incompatible") {
+        io.log("WARNING: the new proxy did not load claudex-tap; request logging is off until the tap is rebuilt for it.");
+      }
     }
     return 0;
   }
@@ -227,7 +228,7 @@ Usage:
   claudex hub [--install [--port PORT]] [--json]
   claudex dashboard [--json]
   claudex configure [--dashboard|--no-dashboard] [--session-affinity|--no-session-affinity] [--strategy round-robin|fill-first]
-                    [--clickhouse URL [--clickhouse-database NAME]|--no-clickhouse]
+                    [--request-log|--no-request-log]
   claudex status [--json]
 
 Environment:
@@ -253,7 +254,8 @@ function parseArguments(args) {
     ["--no-dashboard", "noDashboard"],
     ["--session-affinity", "sessionAffinity"],
     ["--no-session-affinity", "noSessionAffinity"],
-    ["--no-clickhouse", "noClickhouse"],
+    ["--request-log", "requestLog"],
+    ["--no-request-log", "noRequestLog"],
   ]);
   const valued = new Map([
     ["--binary", "binary"],
@@ -262,8 +264,6 @@ function parseArguments(args) {
     ["--manifest", "manifest"],
     ["--strategy", "strategy"],
     ["--file", "file"],
-    ["--clickhouse", "clickhouse"],
-    ["--clickhouse-database", "clickhouseDatabase"],
   ]);
   for (let index = 0; index < args.length; index += 1) {
     const value = args[index];

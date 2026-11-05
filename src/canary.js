@@ -3,10 +3,12 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn } from "node:child_process";
-import { renderProxyConfig } from "./config.js";
+import { readProxyOptions, renderProxyConfig, verifyTap } from "./config.js";
 import { atomicWrite, ensureDir, randomSecret, sleep } from "./util.js";
 
 // Boots a candidate binary against an empty auth directory, so no credential is ever exposed to it.
+// With request logging on, it also reports whether the candidate still loads claudex-tap; an
+// incompatible tap only turns logging off, so it does not fail the canary.
 export async function runIsolatedCanary(binary, paths, manifest, { fetchImpl = fetch } = {}) {
   const root = await mkdtemp(join(tmpdir(), "claudex-canary-"));
   const authDir = join(root, "auth");
@@ -14,7 +16,11 @@ export async function runIsolatedCanary(binary, paths, manifest, { fetchImpl = f
   await ensureDir(authDir);
   const port = await availablePort();
   const proxyKey = randomSecret("canary");
-  await atomicWrite(configPath, renderProxyConfig({ paths: { ...paths, authDir }, manifest, port, proxyKey }), 0o600);
+  const requestLog = (await readProxyOptions(paths.proxyConfig)).requestLog;
+  const tap = requestLog ? await listenForTap(join(root, "tap.sock")) : null;
+  if (requestLog) await verifyTap(paths, manifest);
+  const canaryPaths = { ...paths, authDir, tapSocket: join(root, "tap.sock") };
+  await atomicWrite(configPath, renderProxyConfig({ paths: canaryPaths, manifest, port, proxyKey, requestLog }), 0o600);
 
   const child = spawn(binary, ["-config", configPath], {
     cwd: root,
@@ -25,8 +31,11 @@ export async function runIsolatedCanary(binary, paths, manifest, { fetchImpl = f
   child.once("error", (error) => (spawnError = error));
   try {
     await waitForModels(port, proxyKey, child, fetchImpl, () => spawnError);
-    return { passed: true, port };
+    if (!tap) return { passed: true, port };
+    const loaded = await Promise.race([tap.hello, sleep(5_000).then(() => false)]);
+    return { passed: true, port, requestLog: loaded ? "ok" : "incompatible" };
   } finally {
+    tap?.server.close();
     child.kill("SIGTERM");
     await Promise.race([new Promise((resolve) => child.once("close", resolve)), sleep(2_000)]);
     if (child.exitCode === null) child.kill("SIGKILL");
@@ -52,6 +61,22 @@ async function waitForModels(port, proxyKey, child, fetchImpl, spawnError) {
     await sleep(100);
   }
   throw new Error(`canary proxy did not become ready: ${lastError?.message ?? "unknown error"}`);
+}
+
+// Resolves true once claudex-tap connects and sends its first frame.
+async function listenForTap(socket) {
+  const server = createServer();
+  const hello = new Promise((resolve) => {
+    server.on("connection", (connection) => {
+      connection.once("data", () => resolve(true));
+      connection.on("error", () => {});
+    });
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(socket, resolve);
+  });
+  return { server, hello };
 }
 
 function availablePort() {

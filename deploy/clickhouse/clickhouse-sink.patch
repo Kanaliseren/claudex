@@ -166,42 +166,295 @@ index 0000000..716f9a8
 +		t.Fatalf("small capture changed: %+v", row)
 +	}
 +}
+diff --git a/plugins/clickhouse-sink/collector.go b/plugins/clickhouse-sink/collector.go
+new file mode 100644
+index 0000000..ecc4225
+--- /dev/null
++++ b/plugins/clickhouse-sink/collector.go
+@@ -0,0 +1,99 @@
++//go:build collector
++
++// Collector mode: the same capture, redaction and ClickHouse sink, run as its
++// own process instead of inside CLIProxyAPI. claudex-tap forwards the proxy's
++// hook payloads over a unix socket as <uint32 length><uint8 method length>
++// <method><payload> frames; a crash, stall or memory blow-up here cannot
++// affect the proxy.
++//
++// Build: go build -tags collector -o collector .
++package main
++
++import (
++	"bufio"
++	"encoding/binary"
++	"io"
++	"net"
++	"os"
++	"os/signal"
++	"syscall"
++)
++
++// maxFrame bounds one event; the tap never queues more than 64 MiB in total.
++const maxFrame = 64 << 20
++
++func main() {
++	socket, configPath := os.Getenv("TAP_SOCKET"), os.Getenv("SINK_CONFIG")
++	raw, errRead := os.ReadFile(configPath)
++	if errRead != nil || socket == "" {
++		logf("TAP_SOCKET and a readable SINK_CONFIG are required")
++		os.Exit(2)
++	}
++	if errConfig := current.configure(raw); errConfig != nil {
++		logf("config: %v", errConfig)
++		os.Exit(2)
++	}
++	_ = os.Remove(socket)
++	ln, errListen := net.Listen("unix", socket)
++	if errListen != nil {
++		logf("listen: %v", errListen)
++		os.Exit(1)
++	}
++	_ = os.Chmod(socket, 0o600)
++
++	stop := make(chan os.Signal, 1)
++	signal.Notify(stop, syscall.SIGTERM, os.Interrupt)
++	go func() {
++		<-stop
++		_ = ln.Close()
++	}()
++	for {
++		conn, errAccept := ln.Accept()
++		if errAccept != nil {
++			break
++		}
++		go serve(conn)
++	}
++	current.shutdown()
++}
++
++func serve(conn net.Conn) {
++	defer func() { _ = conn.Close() }()
++	r := bufio.NewReaderSize(conn, 1<<20)
++	header := make([]byte, 4)
++	for {
++		if _, err := io.ReadFull(r, header); err != nil {
++			return
++		}
++		size := binary.BigEndian.Uint32(header)
++		if size == 0 || size > maxFrame {
++			logf("dropping connection: bad frame size %d", size)
++			return
++		}
++		frame := make([]byte, size)
++		if _, err := io.ReadFull(r, frame); err != nil {
++			return
++		}
++		m := int(frame[0])
++		if 1+m > len(frame) {
++			logf("dropping connection: bad frame")
++			return
++		}
++		handleFrame(string(frame[1:1+m]), frame[1+m:])
++	}
++}
++
++func handleFrame(method string, payload []byte) {
++	defer func() {
++		if recover() != nil {
++			logf("%s: panic recovered", method)
++		}
++	}()
++	if method == "tap.hello" {
++		logf("tap connected %s", payload)
++		return
++	}
++	if _, err := current.handle(method, payload); err != nil {
++		logf("%s: %v", method, err)
++	}
++}
+diff --git a/plugins/clickhouse-sink/main.go b/plugins/clickhouse-sink/main.go
+index 38541b0..16c17f7 100644
+--- a/plugins/clickhouse-sink/main.go
++++ b/plugins/clickhouse-sink/main.go
+@@ -1,3 +1,5 @@
++//go:build !collector
++
+ // Command clickhouse-sink is a CLIProxyAPI plugin that stores every proxied
+ // request, response and usage record in ClickHouse.
+ //
 diff --git a/plugins/clickhouse-sink/redact.go b/plugins/clickhouse-sink/redact.go
-index 30d3cd5..5e19fef 100644
+index 30d3cd5..f569115 100644
 --- a/plugins/clickhouse-sink/redact.go
 +++ b/plugins/clickhouse-sink/redact.go
-@@ -44,19 +44,23 @@ func failClosed(row *requestRow) {
+@@ -16,13 +16,19 @@ func redactRequest(r *redact.Redactor, row *requestRow) {
+ 		failClosed(row)
+ 		return
+ 	}
+-	texts := []string{row.Error, row.RequestBody, row.ResponseBody}
++	fields := requestStrings(row)
++	texts := []string{row.RequestBody, row.ResponseBody}
++	for _, f := range fields {
++		texts = append(texts, *f)
++	}
+ 	texts = append(texts, headerValues(row.RequestHeaders)...)
+ 	texts = append(texts, headerValues(row.ResponseHeaders)...)
+ 	texts = append(texts, row.ResponseChunks...)
+ 	rep := r.NewReplacer(texts)
+ 	res := redact.NewResult()
+-	row.Error = rep.Apply(row.Error, res)
++	for _, f := range fields {
++		*f = rep.Apply(*f, res)
++	}
+ 	row.RequestBody = rep.Apply(row.RequestBody, res)
+ 	row.ResponseBody = rep.Apply(row.ResponseBody, res)
+ 	for i := range row.ResponseChunks {
+@@ -35,6 +41,11 @@ func redactRequest(r *redact.Redactor, row *requestRow) {
+ 	row.RedactionRules = res.Rules()
+ }
  
- // redactUsage redacts the free-text fields of a usage row in place.
++// requestStrings are the client-influenced metadata strings of a request row.
++func requestStrings(row *requestRow) []*string {
++	return []*string{&row.RequestID, &row.TraceID, &row.SourceFormat, &row.Model, &row.RequestedModel, &row.Path, &row.Outcome, &row.Error}
++}
++
+ func failClosed(row *requestRow) {
+ 	row.RequestBody, row.ResponseBody, row.Error = "", "", ""
+ 	row.ResponseChunks = nil
+@@ -42,24 +53,45 @@ func failClosed(row *requestRow) {
+ 	row.RedactionCount, row.RedactionRules = -1, nil
+ }
+ 
+-// redactUsage redacts the free-text fields of a usage row in place.
++// redactUsage redacts every string field of a usage row in place. Several
++// come from the client or the credential (Source can fall back to the client
++// API key, SessionID can be "header:<X-Session-ID>"), so none is trusted.
  func redactUsage(r *redact.Redactor, row *usageRow) {
-+	// Source falls back to the client API key for credentials without an
-+	// account label, and BaseURL can carry a key, so both are redacted too.
++	fields := usageStrings(row)
  	defer func() {
  		if recover() != nil {
 -			row.FailureBody, row.ResponseHeaders = "", nil
-+			row.FailureBody, row.ResponseHeaders, row.Source, row.BaseURL = "", nil, "", ""
++			for _, f := range fields {
++				*f = ""
++			}
++			row.ResponseHeaders = nil
  		}
  	}()
  	if r == nil {
 -		row.FailureBody, row.ResponseHeaders = "", nil
-+		row.FailureBody, row.ResponseHeaders, row.Source, row.BaseURL = "", nil, "", ""
++		for _, f := range fields {
++			*f = ""
++		}
++		row.ResponseHeaders = nil
  		return
  	}
 -	texts := append([]string{row.FailureBody}, headerValues(row.ResponseHeaders)...)
-+	texts := append([]string{row.FailureBody, row.Source, row.BaseURL}, headerValues(row.ResponseHeaders)...)
++	texts := headerValues(row.ResponseHeaders)
++	for _, f := range fields {
++		texts = append(texts, *f)
++	}
  	rep := r.NewReplacer(texts)
  	res := redact.NewResult()
- 	row.FailureBody = rep.Apply(row.FailureBody, res)
-+	row.Source = rep.Apply(row.Source, res)
-+	row.BaseURL = rep.Apply(row.BaseURL, res)
+-	row.FailureBody = rep.Apply(row.FailureBody, res)
++	for _, f := range fields {
++		*f = rep.Apply(*f, res)
++	}
  	redactHeaders(rep, row.ResponseHeaders, res)
  }
  
++func usageStrings(row *usageRow) []*string {
++	return []*string{&row.RequestID, &row.TraceID, &row.SelectionID, &row.Provider, &row.ExecutorType, &row.BaseURL,
++		&row.Model, &row.Alias, &row.ResponseModel, &row.AccessProvider, &row.SessionID, &row.ParentSessionID,
++		&row.AuthID, &row.AuthIndex, &row.AuthType, &row.Source, &row.ReasoningEffort, &row.ServiceTier,
++		&row.EffectiveServiceTier, &row.ResponseServiceTier, &row.FailureBody}
++}
++
+ func headerValues(h map[string]string) []string {
+ 	out := make([]string, 0, len(h))
+ 	for _, v := range h {
+diff --git a/plugins/clickhouse-sink/redact/redact.go b/plugins/clickhouse-sink/redact/redact.go
+index dfcf395..7a9623e 100644
+--- a/plugins/clickhouse-sink/redact/redact.go
++++ b/plugins/clickhouse-sink/redact/redact.go
+@@ -31,7 +31,9 @@ const (
+ 	minSecretLen = 12
+ 	// reloadInterval bounds how often secret files are checked for changes.
+ 	// CPA rotates OAuth access tokens, so the known set must follow them.
+-	reloadInterval = 30 * time.Second
++	reloadInterval = 5 * time.Second
++	// maxKnown bounds the remembered secrets (each value is held in four forms).
++	maxKnown = 100_000
+ 	// RuleKnown names matches of configured secret values.
+ 	RuleKnown = "known"
+ )
+@@ -223,7 +225,16 @@ func (r *Redactor) reloadIfStale(now time.Time) {
+ 		r.mu.Unlock()
+ 		return
+ 	}
+-	known := make(map[string]string)
++	// Start from everything seen before: a file read mid-rewrite or a rotated
++	// OAuth token must never shrink the set. Only an implausibly large set is reset.
++	r.mu.Lock()
++	known := make(map[string]string, len(r.known))
++	if len(r.known) < maxKnown {
++		for k, v := range r.known {
++			known[k] = v
++		}
++	}
++	r.mu.Unlock()
+ 	for _, p := range paths {
+ 		for _, secret := range readSecrets(p) {
+ 			addKnown(known, secret)
+diff --git a/plugins/clickhouse-sink/redact_fields_test.go b/plugins/clickhouse-sink/redact_fields_test.go
+new file mode 100644
+index 0000000..3951571
+--- /dev/null
++++ b/plugins/clickhouse-sink/redact_fields_test.go
+@@ -0,0 +1,41 @@
++package main
++
++import (
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++
++	"github.com/api-token/Cli-Proxy-API-Management-Center/plugins/clickhouse-sink/redact"
++)
++
++func TestUsageMetadataAndRewrittenSecretsStayRedacted(t *testing.T) {
++	secret := "sk-known-value-0123456789abcdef"
++	file := filepath.Join(t.TempDir(), "secrets.txt")
++	if err := os.WriteFile(file, []byte(secret+"\n"), 0o600); err != nil {
++		t.Fatal(err)
++	}
++	r, err := redact.New()
++	if err != nil {
++		t.Fatal(err)
++	}
++	r.Configure([]string{file}, nil)
++	// A credential file caught mid-rewrite must not forget what it held.
++	if err := os.WriteFile(file, nil, 0o600); err != nil {
++		t.Fatal(err)
++	}
++	r.Configure([]string{file}, nil)
++
++	row := usageRow{SessionID: "header:" + secret, Source: secret, AuthID: "a-" + secret}
++	redactUsage(r, &row)
++	for _, v := range []string{row.SessionID, row.Source, row.AuthID} {
++		if strings.Contains(v, secret) || !strings.Contains(v, "[REDACTED:known:") {
++			t.Fatalf("usage field not redacted: %q", v)
++		}
++	}
++	req := requestRow{Path: "/v1/messages?key=" + secret, RequestBody: `{"a":"` + secret + `"}`}
++	redactRequest(r, &req)
++	if strings.Contains(req.Path, secret) || strings.Contains(req.RequestBody, secret) {
++		t.Fatalf("request not redacted: %q %q", req.Path, req.RequestBody)
++	}
++}
 diff --git a/plugins/clickhouse-sink/schema.sql b/plugins/clickhouse-sink/schema.sql
-index 9fcb266..ad01a96 100644
+index 9fcb266..d77c64c 100644
 --- a/plugins/clickhouse-sink/schema.sql
 +++ b/plugins/clickhouse-sink/schema.sql
-@@ -23,10 +23,10 @@ CREATE TABLE IF NOT EXISTS {db}.requests
+@@ -23,15 +23,17 @@ CREATE TABLE IF NOT EXISTS {db}.requests
      status_code      UInt16,
      error            String COMMENT 'Terminal error message, redacted',
      request_headers  Map(String, String) COMMENT 'Client request headers, lower-case; credentials removed, values redacted',
@@ -215,15 +468,24 @@ index 9fcb266..ad01a96 100644
      redaction_count  Int32 COMMENT 'Secrets replaced in this row; -1 means redaction failed and bodies were emptied',
      redaction_rules  Array(LowCardinality(String)) COMMENT 'Distinct rule names that matched (known-value, gitleaks rule IDs)'
  )
+ ENGINE = MergeTree
+-PARTITION BY toYYYYMM(started_at)
++-- Daily partitions: the 14-day body TTL then rewrites each day's part once,
++-- instead of rewriting a month-sized part every few hours.
++PARTITION BY toDate(started_at)
+ ORDER BY (started_at, request_id)
+ SETTINGS non_replicated_deduplication_window = 1000
+ COMMENT 'Raw client requests and responses, one row per request. Source of truth; large bodies, query request_facts/messages first.'
 diff --git a/plugins/clickhouse-sink/sink.go b/plugins/clickhouse-sink/sink.go
-index 7fa53f2..d02effa 100644
+index 7fa53f2..feb294f 100644
 --- a/plugins/clickhouse-sink/sink.go
 +++ b/plugins/clickhouse-sink/sink.go
-@@ -96,7 +96,13 @@ func newSink(cfg sinkConfig) *sink {
+@@ -96,8 +96,14 @@ func newSink(cfg sinkConfig) *sink {
  	return &sink{
  		cfg:     cfg,
  		pending: make(map[string][][]byte),
 -		client:  &http.Client{Timeout: httpTimeout},
+-		kick:    make(chan struct{}, 1),
 +		// Rows and the password go only to the configured URL: no redirects,
 +		// no proxy from the environment.
 +		client: &http.Client{
@@ -231,9 +493,10 @@ index 7fa53f2..d02effa 100644
 +			Transport:     &http.Transport{Proxy: nil},
 +			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 +		},
- 		kick:    make(chan struct{}, 1),
++		kick: make(chan struct{}, 1),
  	}
  }
+ 
 @@ -315,12 +321,18 @@ func (s *sink) exec(cfg sinkConfig, params url.Values, body string) error {
  	}
  	resp, errDo := s.client.Do(req)

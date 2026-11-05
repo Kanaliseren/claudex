@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { configure, dashboardSummary } from "../src/settings.js";
 import { readProxyKey, readProxyOptions, readProxySummary, writeProxyConfig } from "../src/config.js";
@@ -29,7 +29,7 @@ test("dashboard and sticky routing survive regeneration and upstream key hashing
   await writeFile(paths.proxyConfig, (await readFile(paths.proxyConfig, "utf8")).replace(key, hash));
   await writeProxyConfig(paths, manifest);
   assert.deepEqual(await readProxyOptions(paths.proxyConfig), {
-    dashboard: true, managementKey: hash, sessionAffinity: true, strategy: "fill-first", clickhouse: null,
+    dashboard: true, managementKey: hash, sessionAffinity: true, strategy: "fill-first", requestLog: false,
   });
   assert.equal(await readProxyKey(paths.proxyConfig), proxyKey);
   assert.equal((await readProxySummary(paths.proxyConfig)).remoteManagementDisabled, true);
@@ -52,7 +52,7 @@ test("a failed service restart restores the prior configuration", { skip: proces
   assert.equal(await readFile(paths.proxyConfig, "utf8"), previous);
 });
 
-test("ClickHouse logging renders the pinned sink with file-based secrets and survives regeneration", { skip: process.platform === "win32" }, async (t) => {
+test("request logging renders only the pinned tap and survives regeneration", { skip: process.platform === "win32" }, async (t) => {
   const root = await temporaryRoot(t);
   const paths = resolvePaths({ env: { CLAUDEX_HOME: root }, home: root });
   const library = Buffer.from("reviewed build");
@@ -60,21 +60,22 @@ test("ClickHouse logging renders the pinned sink with file-based secrets and sur
   const manifest = {
     ...fixture,
     proxy: { ...fixture.proxy, assets: { [platformKey()]: { url: "https://example.invalid/proxy", sha256: "0".repeat(64) } } },
-    plugins: { "clickhouse-sink": { assets: { [platformKey()]: { sha256: createHash("sha256").update(library).digest("hex") } } } },
+    plugins: { "claudex-tap": { assets: { [platformKey()]: { sha256: createHash("sha256").update(library).digest("hex") } } } },
   };
   await writeProxyConfig(paths, manifest);
-  const clickhouse = { url: "http://127.0.0.1:8123", database: "cliproxy" };
+  const tap = join(paths.pluginsDir, "claudex-tap.so");
 
-  await assert.rejects(configure(paths, manifest, { clickhouse }), /not installed/);
-  await mkdir(paths.pluginsDir, { recursive: true });
-  await writeFile(join(paths.pluginsDir, "clickhouse-sink.so"), "tampered build");
-  await assert.rejects(configure(paths, manifest, { clickhouse }), /checksum mismatch/);
-  await writeFile(join(paths.pluginsDir, "clickhouse-sink.so"), library);
-  await writeFile(paths.clickhousePassword, "pw-from-file-0123456789\n", { mode: 0o644 });
-  await assert.rejects(configure(paths, manifest, { clickhouse }), /owner-only/);
-  await chmod(paths.clickhousePassword, 0o600);
+  await assert.rejects(configure(paths, manifest, { requestLog: true }), /must hold only claudex-tap\.so/);
+  await mkdir(join(paths.pluginsDir, "linux", "amd64"), { recursive: true });
+  await writeFile(tap, "tampered build");
+  await assert.rejects(configure(paths, manifest, { requestLog: true }), /checksum mismatch/);
+  await writeFile(tap, library);
+  // The proxy also loads <dir>/<os>/<arch>, where a versioned file would win.
+  await writeFile(join(paths.pluginsDir, "linux", "amd64", "claudex-tap-v9.so"), "shadow");
+  await assert.rejects(configure(paths, manifest, { requestLog: true }), /must hold only/);
+  await rm(join(paths.pluginsDir, "linux"), { recursive: true });
 
-  await configure(paths, manifest, { clickhouse });
+  await configure(paths, manifest, { requestLog: true });
   await writeProxyConfig(paths, manifest);
   const config = await readFile(paths.proxyConfig, "utf8");
   assert.ok(config.endsWith(`
@@ -82,19 +83,13 @@ plugins:
   enabled: true
   dir: ${JSON.stringify(paths.pluginsDir)}
   configs:
-    clickhouse-sink:
+    claudex-tap:
       enabled: true
-      url: "http://127.0.0.1:8123"
-      database: "cliproxy"
-      username: "claudex_writer"
-      password: "pw-from-file-0123456789"
-      redact-files:
-        - ${JSON.stringify(paths.configDir)}
-        - ${JSON.stringify(paths.authDir)}
+      socket: ${JSON.stringify(paths.tapSocket)}
 `));
-  assert.deepEqual((await readProxyOptions(paths.proxyConfig)).clickhouse, clickhouse);
+  assert.equal((await readProxyOptions(paths.proxyConfig)).requestLog, true);
   assert.equal((await checkUpdate(paths, manifest)).configMatchesChannel, true);
 
-  await configure(paths, manifest, { clickhouse: null });
-  assert.doesNotMatch(await readFile(paths.proxyConfig, "utf8"), /plugins:|pw-from-file/);
+  await configure(paths, manifest, { requestLog: false });
+  assert.doesNotMatch(await readFile(paths.proxyConfig, "utf8"), /plugins:/);
 });

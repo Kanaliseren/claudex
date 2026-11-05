@@ -1009,7 +1009,7 @@ index 0000000..8fb36a2
 +	}
 +}
 diff --git a/plugins/clickhouse-sink/schema.sql b/plugins/clickhouse-sink/schema.sql
-index 9fcb266..4f7eae1 100644
+index 9fcb266..6dbd9a0 100644
 --- a/plugins/clickhouse-sink/schema.sql
 +++ b/plugins/clickhouse-sink/schema.sql
 @@ -23,15 +23,17 @@ CREATE TABLE IF NOT EXISTS {db}.requests
@@ -1017,12 +1017,12 @@ index 9fcb266..4f7eae1 100644
      error            String COMMENT 'Terminal error message, redacted',
      request_headers  Map(String, String) COMMENT 'Client request headers, lower-case; credentials removed, values redacted',
 -    request_body     String COMMENT 'Client request body as sent, redacted' CODEC(ZSTD(3)),
-+    request_body     String COMMENT 'Client request body as sent, redacted' CODEC(ZSTD(3)) TTL toDate(started_at) + INTERVAL 14 DAY,
++    request_body     String COMMENT 'Client request body as sent, redacted' CODEC(ZSTD(3)) TTL toDate(started_at) + INTERVAL 3 DAY,
      response_headers Map(String, String) COMMENT 'Response headers delivered to the client, redacted',
 -    response_body    String COMMENT 'Non-streaming response body, redacted; empty for streams' CODEC(ZSTD(3)),
 -    response_chunks  Array(String) COMMENT 'Stream chunks exactly as delivered (one element each), redacted; empty for non-streams' CODEC(ZSTD(3)),
-+    response_body    String COMMENT 'Non-streaming response body, redacted; empty for streams' CODEC(ZSTD(3)) TTL toDate(started_at) + INTERVAL 14 DAY,
-+    response_chunks  Array(String) COMMENT 'Stream chunks exactly as delivered (one element each), redacted; empty for non-streams' CODEC(ZSTD(3)) TTL toDate(started_at) + INTERVAL 14 DAY,
++    response_body    String COMMENT 'Non-streaming response body, redacted; empty for streams' CODEC(ZSTD(3)) TTL toDate(started_at) + INTERVAL 3 DAY,
++    response_chunks  Array(String) COMMENT 'Stream chunks exactly as delivered (one element each), redacted; empty for non-streams' CODEC(ZSTD(3)) TTL toDate(started_at) + INTERVAL 3 DAY,
      redaction_count  Int32 COMMENT 'Secrets replaced in this row; -1 means redaction failed and bodies were emptied',
      redaction_rules  Array(LowCardinality(String)) COMMENT 'Distinct rule names that matched (known-value, gitleaks rule IDs)'
  )

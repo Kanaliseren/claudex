@@ -74,23 +74,28 @@ curl -s -K <(printf 'user = "claudex_reader:%s"\n' "$(cat ~/.config/claudex/clic
 ## Disk use and retention
 
 Agents resend the whole conversation on every turn, so raw request bodies grow
-with the square of a session's length (a busy day here is ~2 billion input
-tokens, ~8 GB of raw JSON). The stack keeps what matters and drops the rest:
+with the square of a session's length: measured here, ~2 MB per request that
+compresses only ~2.4× (code and tool output). The stack keeps what matters and
+drops the rest:
 
 - `messages` / `request_facts` keep each turn's new input and the reply once,
-  forever. Images, files and encrypted reasoning become placeholders there.
+  forever (~20 KB per request on disk). Images, files and encrypted reasoning
+  become placeholders there.
 - `usage` and the metadata columns of `requests` stay forever.
-- Raw `request_body`, `response_body` and `response_chunks` expire 14 days
-  after their day; with daily partitions a day's bodies expire together.
+- Raw `request_body`, `response_body` and `response_chunks` expire 3 days
+  after their day, in daily partitions so a day's bodies expire together.
+  Long enough to inspect or re-derive recent requests; on a heavy day
+  (~9k requests) that window is roughly 20 GB.
 - ClickHouse's own metric and trace tables are off (`config.xml`); they would
   otherwise add several GB a day. `query_log` keeps 7 days, server log files
   2 × 50 MB, and each container's Docker log 3 × 10 MB.
 - The collector and deriver have Go memory limits under their container
   limits, so a burst slows them down instead of getting them killed.
 
-Expect roughly 20–40 GB for the 14-day raw window and 5–15 GB a year of
-derived data. Never run the deriver's `--rebuild` once raw bodies have expired:
-it would re-derive those requests from empty bodies and lose their messages.
+Never run the deriver's `--rebuild` once raw bodies have expired: it would
+re-derive those requests from empty bodies and lose their messages. If the
+deriver is down for more than 3 days, requests from that time keep only
+metadata.
 
 ## Local patch
 
@@ -105,7 +110,7 @@ it would re-derive those requests from empty bodies and lose their messages.
 - captures are capped (64 MiB per request, 512 MiB in flight), the ClickHouse
   client ignores redirects and proxy variables, and ClickHouse error text, which
   can quote rejected rows, is not logged;
-- raw bodies expire after 14 days, with daily partitions;
+- raw bodies expire after 3 days, with daily partitions;
 - a `tap.dropped` announcement marks in-flight requests with
   `[clickhouse-sink: events lost, capture incomplete]` in `error`; so does a
   completion whose request never arrived;

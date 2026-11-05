@@ -1,0 +1,8 @@
+<clickhouse>
+    <!-- Server logs at warning and no text_log, so query text (which can quote
+         stored prompts) is not written to log files. -->
+    <logger>
+        <level>warning</level>
+    </logger>
+    <text_log remove="remove"/>
+</clickhouse>

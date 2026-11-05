@@ -1,9 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFile, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { configure, dashboardSummary } from "../src/settings.js";
 import { readProxyKey, readProxyOptions, readProxySummary, writeProxyConfig } from "../src/config.js";
-import { resolvePaths } from "../src/paths.js";
+import { platformKey, resolvePaths } from "../src/paths.js";
 import { fixtureManifest, temporaryRoot } from "../test-support/helpers.js";
 
 test("dashboard and sticky routing survive regeneration and upstream key hashing", async (t) => {
@@ -26,7 +28,7 @@ test("dashboard and sticky routing survive regeneration and upstream key hashing
   await writeFile(paths.proxyConfig, (await readFile(paths.proxyConfig, "utf8")).replace(key, hash));
   await writeProxyConfig(paths, manifest);
   assert.deepEqual(await readProxyOptions(paths.proxyConfig), {
-    dashboard: true, managementKey: hash, sessionAffinity: true, strategy: "fill-first",
+    dashboard: true, managementKey: hash, sessionAffinity: true, strategy: "fill-first", clickhouse: null,
   });
   assert.equal(await readProxyKey(paths.proxyConfig), proxyKey);
   assert.equal((await readProxySummary(paths.proxyConfig)).remoteManagementDisabled, true);
@@ -47,4 +49,48 @@ test("a failed service restart restores the prior configuration", { skip: proces
     dashboard: true, platform: "linux", runCommand: async () => { throw new Error("restart failed"); },
   }), /restart failed/);
   assert.equal(await readFile(paths.proxyConfig, "utf8"), previous);
+});
+
+test("ClickHouse logging renders the pinned sink with file-based secrets and survives regeneration", { skip: process.platform === "win32" }, async (t) => {
+  const root = await temporaryRoot(t);
+  const paths = resolvePaths({ env: { CLAUDEX_HOME: root }, home: root });
+  const library = Buffer.from("reviewed build");
+  const manifest = {
+    ...fixtureManifest(),
+    plugins: { "clickhouse-sink": { assets: { [platformKey()]: { sha256: createHash("sha256").update(library).digest("hex") } } } },
+  };
+  await writeProxyConfig(paths, manifest);
+  const clickhouse = { url: "http://127.0.0.1:8123", database: "cliproxy" };
+
+  await assert.rejects(configure(paths, manifest, { clickhouse }), /not installed/);
+  await mkdir(paths.pluginsDir, { recursive: true });
+  await writeFile(join(paths.pluginsDir, "clickhouse-sink.so"), "tampered build");
+  await assert.rejects(configure(paths, manifest, { clickhouse }), /checksum mismatch/);
+  await writeFile(join(paths.pluginsDir, "clickhouse-sink.so"), library);
+  await writeFile(paths.clickhousePassword, "pw-from-file-0123456789\n", { mode: 0o644 });
+  await assert.rejects(configure(paths, manifest, { clickhouse }), /owner-only/);
+  await chmod(paths.clickhousePassword, 0o600);
+
+  await configure(paths, manifest, { clickhouse });
+  await writeProxyConfig(paths, manifest);
+  const config = await readFile(paths.proxyConfig, "utf8");
+  assert.ok(config.endsWith(`
+plugins:
+  enabled: true
+  dir: ${JSON.stringify(paths.pluginsDir)}
+  configs:
+    clickhouse-sink:
+      enabled: true
+      url: "http://127.0.0.1:8123"
+      database: "cliproxy"
+      username: "claudex_writer"
+      password: "pw-from-file-0123456789"
+      redact-files:
+        - ${JSON.stringify(paths.configDir)}
+        - ${JSON.stringify(paths.authDir)}
+`));
+  assert.deepEqual((await readProxyOptions(paths.proxyConfig)).clickhouse, clickhouse);
+
+  await configure(paths, manifest, { clickhouse: null });
+  assert.doesNotMatch(await readFile(paths.proxyConfig, "utf8"), /plugins:|pw-from-file/);
 });

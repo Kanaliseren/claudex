@@ -67,6 +67,19 @@
       "displayName": "Claude Opus 5.5"
     }
   },
+  "plugins": {
+    "clickhouse-sink": {
+      "repository": "api-token/Cli-Proxy-API-Management-Center",
+      "commit": "68c9bb8c701f2ed229e989a07f6d1ef1ec79da7a",
+      "path": "plugins/clickhouse-sink",
+      "builder": "golang:1.26-bookworm@sha256:29f741a2adcfacecf72c6f1f8275fad87a33d4080a459b71dffebf1b324abd8b",
+      "assets": {
+        "linux-x64": {
+          "sha256": "1a054ecf7bd03c3b902690ef54bf04f02e900bed78edb6ea12a44b28cfc82ab9"
+        }
+      }
+    }
+  },
   "compatibility": {
     "claudeCode": {
       "tested": [

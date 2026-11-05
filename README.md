@@ -223,6 +223,13 @@ bindings retain their account where possible, with failover when unavailable.
 Claude models use Claude accounts; Codex accounts serve Codex models.
 
 `claudex configure --no-dashboard` disables the dashboard and management API.
+
+## Request logging (optional)
+
+`claudex configure --clickhouse URL` stores every proxied request and response,
+with secrets redacted, in a local ClickHouse you can search later. It is off by
+default and needs the pinned plugin build; setup is in the repository's
+`deploy/clickhouse/README.md`.
 `--no-session-affinity` disables session binding. Claudex preserves these supported
 settings across setup and updates; arbitrary edits in the panel's YAML editor
 are not preserved by Claudex configuration regeneration.

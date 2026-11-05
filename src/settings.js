@@ -1,8 +1,10 @@
-import { readFile } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
+import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 import { readProxyKey, readProxyOptions, readProxySummary, writeProxyConfig } from "./config.js";
 import { restartService } from "./service.js";
-import { atomicWrite, exists, sleep, withFileLock } from "./util.js";
+import { atomicWrite, exists, sha256File, sleep, withFileLock } from "./util.js";
+import { platformKey } from "./paths.js";
 import { assertOwnedProxy } from "./shared.js";
 import { managementEndpoint } from "./hub.js";
 
@@ -12,9 +14,10 @@ export async function configure(paths, manifest, options = {}) {
     const previous = await readFile(paths.proxyConfig, "utf8");
     const { port } = await readProxySummary(paths.proxyConfig);
     const settings = await readProxyOptions(paths.proxyConfig);
-    for (const name of ["dashboard", "sessionAffinity", "strategy"]) {
+    for (const name of ["dashboard", "sessionAffinity", "strategy", "clickhouse"]) {
       if (options[name] !== undefined) settings[name] = options[name];
     }
+    if (settings.clickhouse) await verifyClickhouseSink(paths, manifest);
     if (settings.dashboard && !settings.managementKey) {
       const key = (await exists(paths.dashboardKey))
         ? (await readFile(paths.dashboardKey, "utf8")).trim()
@@ -34,6 +37,20 @@ export async function configure(paths, manifest, options = {}) {
       throw error;
     }
   });
+}
+
+// The proxy loads every library in the plugin directory in-process, next to
+// the OAuth tokens, so only the reviewed build pinned in the channel may run.
+async function verifyClickhouseSink(paths, manifest) {
+  const pin = manifest.plugins?.["clickhouse-sink"];
+  const expected = pin?.assets?.[platformKey()]?.sha256;
+  if (!expected) throw new Error(`no reviewed clickhouse-sink build is pinned for ${platformKey()}`);
+  const library = join(paths.pluginsDir, "clickhouse-sink.so");
+  if (!(await exists(library))) throw new Error(`clickhouse-sink is not installed: ${library} (run deploy/clickhouse/build-plugin.sh)`);
+  const libraries = (await readdir(paths.pluginsDir)).filter((name) => /\.(so|dylib|dll)$/i.test(name));
+  if (libraries.length !== 1) throw new Error(`unexpected plugin libraries in ${paths.pluginsDir}: ${libraries.join(", ")}`);
+  const actual = await sha256File(library);
+  if (actual !== expected) throw new Error(`clickhouse-sink checksum mismatch: expected ${expected}, got ${actual}`);
 }
 
 async function waitForProxy(paths, port, fetchImpl) {
@@ -59,5 +76,6 @@ export async function dashboardSummary(paths) {
     keyFile: paths.dashboardKey,
     strategy: options.strategy,
     sessionAffinity: options.sessionAffinity,
+    clickhouse: options.clickhouse,
   };
 }

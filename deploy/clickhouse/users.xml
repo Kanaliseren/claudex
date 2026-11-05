@@ -1,0 +1,45 @@
+<clickhouse>
+    <users>
+        <!-- No password-less admin. -->
+        <default remove="remove"/>
+
+        <!-- The proxy plugin and the deriver: create and fill the cliproxy tables. -->
+        <claudex_writer>
+            <password from_env="CLAUDEX_WRITER_PASSWORD"/>
+            <networks><ip>::/0</ip></networks>
+            <profile>default</profile>
+            <quota>default</quota>
+            <grants>
+                <query>GRANT CREATE DATABASE, CREATE TABLE, CREATE VIEW, DROP TABLE, DROP VIEW, ALTER, INSERT, SELECT, TRUNCATE ON cliproxy.*</query>
+            </grants>
+        </claudex_writer>
+
+        <!-- Searching: read-only, bounded queries. -->
+        <claudex_reader>
+            <password from_env="CLAUDEX_READER_PASSWORD"/>
+            <networks><ip>::/0</ip></networks>
+            <profile>reader</profile>
+            <quota>default</quota>
+            <grants>
+                <query>GRANT SELECT ON cliproxy.*</query>
+            </grants>
+        </claudex_reader>
+    </users>
+
+    <profiles>
+        <reader>
+            <!-- 2 lets clients set format options but not change data or limits. -->
+            <readonly>2</readonly>
+            <max_execution_time>60</max_execution_time>
+            <max_result_bytes>20000000</max_result_bytes>
+            <result_overflow_mode>throw</result_overflow_mode>
+            <max_memory_usage>4000000000</max_memory_usage>
+            <constraints>
+                <max_execution_time><max>60</max></max_execution_time>
+                <max_result_bytes><max>20000000</max></max_result_bytes>
+                <result_overflow_mode><const/></result_overflow_mode>
+                <max_memory_usage><max>4000000000</max></max_memory_usage>
+            </constraints>
+        </reader>
+    </profiles>
+</clickhouse>

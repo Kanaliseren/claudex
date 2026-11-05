@@ -1,0 +1,69 @@
+# Local ClickHouse for claudex request logging, plus the deriver that turns raw
+# rows into searchable tables. See README.md in this directory.
+name: claudex-clickhouse
+
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:26.8.36.3@sha256:d426d2f612e1e189c90f9a3f8dcd85a03c6851273833817a296bb327e63aa7a7
+    restart: unless-stopped
+    # Passwords come from owner-only files; root reads them, then the image's
+    # entrypoint drops to the clickhouse user.
+    entrypoint:
+      - bash
+      - -c
+      - |
+        export CLAUDEX_WRITER_PASSWORD="$$(cat /run/secrets/clickhouse_writer)"
+        export CLAUDEX_READER_PASSWORD="$$(cat /run/secrets/clickhouse_reader)"
+        exec /entrypoint.sh
+    environment:
+      CLICKHOUSE_SKIP_USER_SETUP: "1"
+    secrets: [clickhouse_writer, clickhouse_reader]
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+      - ./users.xml:/etc/clickhouse-server/users.d/claudex.xml:ro
+      - ./config.xml:/etc/clickhouse-server/config.d/claudex.xml:ro
+    ports:
+      - "127.0.0.1:8123:8123"
+    networks: [default, internal]
+    ulimits:
+      nofile: { soft: 262144, hard: 262144 }
+    mem_limit: 8g
+
+  deriver:
+    build:
+      context: .
+      dockerfile: deriver.Dockerfile
+    image: claudex-clickhouse-deriver:68c9bb8
+    restart: unless-stopped
+    depends_on: [clickhouse]
+    # Runs as the host user so it can read the owner-only secret files it
+    # redacts with; the internal network gives it no route out.
+    user: "${CLAUDEX_UID:-1000}:${CLAUDEX_GID:-1000}"
+    entrypoint:
+      - /busybox/sh
+      - -c
+      - CLICKHOUSE_PASSWORD="$$(cat /run/secrets/clickhouse_writer)" exec /deriver "$$@"
+      - deriver
+    environment:
+      CLICKHOUSE_URL: http://clickhouse:8123
+      CLICKHOUSE_USER: claudex_writer
+      CLICKHOUSE_DB: cliproxy
+      REDACT_FILES: /redact/config,/redact/auth
+    secrets: [clickhouse_writer]
+    volumes:
+      - ${HOME}/.config/claudex:/redact/config:ro
+      - ${HOME}/.local/state/claudex/auth:/redact/auth:ro
+    networks: [internal]
+
+secrets:
+  clickhouse_writer:
+    file: ${HOME}/.config/claudex/clickhouse-password
+  clickhouse_reader:
+    file: ${HOME}/.config/claudex/clickhouse-reader-password
+
+volumes:
+  clickhouse-data:
+
+networks:
+  internal:
+    internal: true

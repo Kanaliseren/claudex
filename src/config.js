@@ -1,5 +1,7 @@
-import { readFile } from "node:fs/promises";
-import { atomicWrite, exists, randomSecret } from "./util.js";
+import { readFile, readdir } from "node:fs/promises";
+import { dirname, join } from "node:path";
+import { platformKey } from "./paths.js";
+import { atomicWrite, ensureDir, exists, randomSecret, sha256File } from "./util.js";
 
 export async function writeProxyConfig(paths, manifest, { port = 8317, ...overrides } = {}) {
   let proxyKey = randomSecret();
@@ -7,12 +9,40 @@ export async function writeProxyConfig(paths, manifest, { port = 8317, ...overri
     proxyKey = await readProxyKey(paths.proxyConfig);
   }
   const options = { ...(await readProxyOptions(paths.proxyConfig)), ...overrides };
+  // A missing or changed tap pauses logging rather than blocking the proxy.
+  if (options.requestLog && !options.tapPaused && !(await tapVerified(paths, manifest))) options.tapPaused = true;
   const yaml = renderProxyConfig({ paths, manifest, port, proxyKey, ...options });
   await atomicWrite(paths.proxyConfig, yaml, 0o600);
-  return { proxyKey, port };
+  return { proxyKey, port, requestLog: options.requestLog ? (options.tapPaused ? "paused" : "active") : "off" };
 }
 
-export function renderProxyConfig({ paths, manifest, port, proxyKey, dashboard = false, managementKey = "", sessionAffinity = false, strategy = "round-robin" }) {
+export async function tapVerified(paths, manifest) {
+  try {
+    await verifyTap(paths, manifest);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// The proxy loads every library under its plugin directory in-process, next
+// to the OAuth tokens, so only the reviewed tap build pinned in the channel
+// may be there.
+export async function verifyTap(paths, manifest) {
+  const expected = manifest.plugins?.["claudex-tap"]?.assets?.[platformKey()]?.sha256;
+  if (!expected) throw new Error(`no reviewed claudex-tap build is pinned for ${platformKey()}`);
+  const libraries = (await exists(paths.pluginsDir))
+    ? (await readdir(paths.pluginsDir, { recursive: true })).filter((name) => /\.(so|dylib|dll)$/i.test(name))
+    : [];
+  if (libraries.length !== 1 || libraries[0] !== "claudex-tap.so") {
+    throw new Error(`${paths.pluginsDir} must hold only claudex-tap.so (build it with deploy/clickhouse/build-plugin.sh); found: ${libraries.join(", ") || "nothing"}`);
+  }
+  const actual = await sha256File(join(paths.pluginsDir, "claudex-tap.so"));
+  if (actual !== expected) throw new Error(`claudex-tap checksum mismatch: expected ${expected}, got ${actual}`);
+  await ensureDir(dirname(paths.tapSocket));
+}
+
+export function renderProxyConfig({ paths, manifest, port, proxyKey, dashboard = false, managementKey = "", sessionAffinity = false, strategy = "round-robin", requestLog = false, tapPaused = false }) {
   if (dashboard && !managementKey) throw new Error("dashboard requires a management key");
   if (!["round-robin", "fill-first"].includes(strategy)) throw new Error("unsupported routing strategy");
   const claudeCodeVersion = manifest.compatibility.claudeCode.tested.at(-1);
@@ -47,6 +77,21 @@ routing:
 
 claude-header-defaults:
   user-agent: ${yamlString(`claude-cli/${claudeCodeVersion} (external, cli)`)}
+${requestLog ? renderRequestLog(paths, !tapPaused) : ""}`;
+}
+
+// claudex-tap only copies traffic to the collector's socket and never changes
+// it; redaction and storage happen outside the proxy (deploy/clickhouse).
+// While paused the block stays, so the choice survives, but nothing loads.
+function renderRequestLog(paths, active) {
+  return `
+plugins:
+  enabled: ${active}
+  dir: ${yamlString(paths.pluginsDir)}
+  configs:
+    claudex-tap:
+      enabled: true
+      socket: ${yamlString(paths.tapSocket)}
 `;
 }
 
@@ -107,5 +152,7 @@ export async function readProxyOptions(path) {
     managementKey: blockValue("remote-management", "secret-key") ?? "",
     sessionAffinity: blockValue("routing", "session-affinity") === "true",
     strategy: blockValue("routing", "strategy") ?? "round-robin",
+    requestLog: blockValue("plugins", "socket") !== undefined,
+    tapPaused: blockValue("plugins", "enabled") === "false",
   };
 }

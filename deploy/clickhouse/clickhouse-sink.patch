@@ -1,0 +1,1079 @@
+diff --git a/plugins/clickhouse-sink/capture.go b/plugins/clickhouse-sink/capture.go
+index 5da575b..22c4184 100644
+--- a/plugins/clickhouse-sink/capture.go
++++ b/plugins/clickhouse-sink/capture.go
+@@ -164,6 +164,19 @@ type usageRow struct {
+ // that were in flight when the plugin was reloaded.
+ const pendingTTL = time.Hour
+ 
++// Captures live inside the proxy process, so their memory is bounded before
++// bytes are retained: one request keeps at most maxCaptureBytes and all
++// in-flight requests together at most maxPendingBytes. A request over either
++// limit is stored as metadata only, with droppedNote in its error.
++const (
++	maxCaptureBytes = 64 << 20
++	maxPendingBytes = 512 << 20
++	droppedNote     = "[clickhouse-sink: capture over size limit, bodies dropped]"
++	// lostNote marks a request some of whose events never reached the
++	// collector, so its stored bodies or chunks may be incomplete.
++	lostNote = "[clickhouse-sink: events lost, capture incomplete]"
++)
++
+ type pending struct {
+ 	startedAt       time.Time
+ 	updatedAt       time.Time
+@@ -173,6 +186,9 @@ type pending struct {
+ 	responseHeaders http.Header
+ 	responseBody    []byte
+ 	chunks          []string
++	size            int
++	dropped         bool
++	lost            bool
+ }
+ 
+ // capture collects the request and response bodies of in-flight requests,
+@@ -181,6 +197,7 @@ type capture struct {
+ 	mu        sync.Mutex
+ 	bodies    bool
+ 	pending   map[string]*pending
++	total     int
+ 	lastSweep time.Time
+ }
+ 
+@@ -208,7 +225,10 @@ func (c *capture) begin(req interceptRequest, now time.Time) {
+ 	defer c.mu.Unlock()
+ 	c.sweepLocked(now)
+ 	entry := &pending{startedAt: now, updatedAt: now, path: metadataString(req.Metadata, "request_path")}
+-	if c.bodies {
++	if old := c.pending[req.RequestID]; old != nil {
++		c.total -= old.size
++	}
++	if c.bodies && c.retain(entry, len(req.Body)+headerSize(req.Headers)) {
+ 		entry.requestHeaders = req.Headers
+ 		entry.requestBody = req.Body
+ 	}
+@@ -223,6 +243,9 @@ func (c *capture) response(req responseRequest, now time.Time) {
+ 		return
+ 	}
+ 	entry.updatedAt = now
++	if !c.retain(entry, len(req.Body)+headerSize(req.ResponseHeaders)) {
++		return
++	}
+ 	entry.responseHeaders = req.ResponseHeaders
+ 	entry.responseBody = req.Body
+ }
+@@ -235,6 +258,9 @@ func (c *capture) chunk(req streamChunkRequest, now time.Time) {
+ 		return
+ 	}
+ 	entry.updatedAt = now
++	if !c.retain(entry, len(req.Body)+headerSize(req.ResponseHeaders)) {
++		return
++	}
+ 	if len(req.ResponseHeaders) > 0 {
+ 		entry.responseHeaders = req.ResponseHeaders
+ 	}
+@@ -252,6 +278,9 @@ func (c *capture) complete(ev completion) requestRow {
+ 	c.mu.Lock()
+ 	entry := c.pending[ev.RequestID]
+ 	delete(c.pending, ev.RequestID)
++	if entry != nil {
++		c.total -= entry.size
++	}
+ 	c.mu.Unlock()
+ 
+ 	row := requestRow{
+@@ -277,6 +306,15 @@ func (c *capture) complete(ev completion) requestRow {
+ 		if row.Path == "" {
+ 			row.Path = entry.path
+ 		}
++		if entry.dropped {
++			row.Error = strings.TrimSpace(row.Error + " " + droppedNote)
++		}
++		if entry.lost {
++			row.Error = strings.TrimSpace(row.Error + " " + lostNote)
++		}
++	} else if c.storeBodies() {
++		// The request's first event never arrived.
++		row.Error = strings.TrimSpace(row.Error + " " + lostNote)
+ 	}
+ 	return row
+ }
+@@ -288,11 +326,51 @@ func (c *capture) sweepLocked(now time.Time) {
+ 	c.lastSweep = now
+ 	for id, entry := range c.pending {
+ 		if now.Sub(entry.updatedAt) > pendingTTL {
++			c.total -= entry.size
+ 			delete(c.pending, id)
+ 		}
+ 	}
+ }
+ 
++// markLost flags every in-flight capture after the tap reported drops.
++func (c *capture) markLost() {
++	c.mu.Lock()
++	defer c.mu.Unlock()
++	for _, entry := range c.pending {
++		entry.lost = true
++	}
++}
++
++// retain accounts for n more bytes on entry and reports whether they may be
++// kept. Over a limit, the entry's bodies are released for good. Callers hold c.mu.
++func (c *capture) retain(entry *pending, n int) bool {
++	if entry.dropped {
++		return false
++	}
++	if entry.size+n <= maxCaptureBytes && c.total+n <= maxPendingBytes {
++		entry.size += n
++		c.total += n
++		return true
++	}
++	c.total -= entry.size
++	entry.size = 0
++	entry.dropped = true
++	entry.requestHeaders, entry.requestBody = nil, nil
++	entry.responseHeaders, entry.responseBody, entry.chunks = nil, nil, nil
++	return false
++}
++
++func headerSize(h http.Header) int {
++	n := 0
++	for name, values := range h {
++		n += len(name)
++		for _, v := range values {
++			n += len(v)
++		}
++	}
++	return n
++}
++
+ func (c *capture) size() int {
+ 	c.mu.Lock()
+ 	defer c.mu.Unlock()
+diff --git a/plugins/clickhouse-sink/capture_limit_test.go b/plugins/clickhouse-sink/capture_limit_test.go
+new file mode 100644
+index 0000000..716f9a8
+--- /dev/null
++++ b/plugins/clickhouse-sink/capture_limit_test.go
+@@ -0,0 +1,29 @@
++package main
++
++import (
++	"strings"
++	"testing"
++	"time"
++)
++
++func TestCaptureOverLimitKeepsMetadataOnly(t *testing.T) {
++	c := newCapture()
++	now := time.Now()
++	c.begin(interceptRequest{RequestID: "r1", Body: []byte("hello")}, now)
++	chunk := []byte(strings.Repeat("x", 1<<20))
++	for i := 0; i <= maxCaptureBytes>>20; i++ {
++		c.chunk(streamChunkRequest{RequestID: "r1", Body: chunk, ChunkIndex: i}, now)
++	}
++	row := c.complete(completion{RequestID: "r1", Model: "m"})
++	if row.RequestBody != "" || len(row.ResponseChunks) != 0 || !strings.Contains(row.Error, droppedNote) {
++		t.Fatalf("over-limit capture kept bodies: body=%d chunks=%d error=%q", len(row.RequestBody), len(row.ResponseChunks), row.Error)
++	}
++	if c.total != 0 {
++		t.Fatalf("pending bytes not released: %d", c.total)
++	}
++
++	c.begin(interceptRequest{RequestID: "r2", Body: []byte("small")}, now)
++	if row := c.complete(completion{RequestID: "r2"}); row.RequestBody != "small" || row.Error != "" {
++		t.Fatalf("small capture changed: %+v", row)
++	}
++}
+diff --git a/plugins/clickhouse-sink/collector.go b/plugins/clickhouse-sink/collector.go
+new file mode 100644
+index 0000000..5ac1d08
+--- /dev/null
++++ b/plugins/clickhouse-sink/collector.go
+@@ -0,0 +1,276 @@
++//go:build collector
++
++// Collector mode: the same capture, redaction and ClickHouse sink, run as its
++// own process instead of inside CLIProxyAPI. claudex-tap forwards the proxy's
++// hook payloads over a unix socket as <uint32 length><uint8 method length>
++// <method><payload> frames; a crash, stall or memory blow-up here cannot
++// affect the proxy.
++//
++// Build: go build -tags collector -o collector .
++package main
++
++import (
++	"bufio"
++	"encoding/binary"
++	"encoding/json"
++	"io"
++	"net"
++	"os"
++	"os/signal"
++	"runtime"
++	"strings"
++	"sync"
++	"syscall"
++	"time"
++)
++
++// Finished requests are redacted and stored on worker goroutines, so a large
++// body never stalls the socket reader (the tap drops events after 5 s of
++// stall). Rows held by workers count against workBytes; past it, the reader
++// waits, which is the only point where the collector applies back-pressure.
++const (
++	workBytes = 256 << 20
++	// rowFloor is charged for every row on top of its data, covering scan
++	// allocations and small fields, so many small rows are bounded too.
++	rowFloor = 64 << 10
++)
++
++var (
++	workMu   sync.Mutex
++	workCond = sync.NewCond(&workMu)
++	working  int // bytes of rows held by workers
++	inFlight sync.WaitGroup
++	// workerSlots caps concurrent workers independently of bytes.
++	workerSlots = make(chan struct{}, runtime.NumCPU())
++	handlers    sync.WaitGroup
++	conns       = map[net.Conn]bool{}
++	closing     bool
++)
++
++// maxFrame bounds one event: the tap's 64 MiB payload limit plus the method.
++const maxFrame = 64<<20 + 512
++
++// accepted are the only methods a frame may name; anything else, including
++// plugin reconfiguration, is ignored.
++var accepted = map[string]bool{
++	"request.intercept_before":        true,
++	"response.intercept_after":        true,
++	"response.intercept_stream_chunk": true,
++	"request.complete":                true,
++	"usage.handle":                    true,
++	"tap.hello":                       true,
++	"tap.dropped":                     true,
++}
++
++func main() {
++	socket, configPath := os.Getenv("TAP_SOCKET"), os.Getenv("SINK_CONFIG")
++	raw, errRead := os.ReadFile(configPath)
++	if errRead != nil || socket == "" {
++		logf("TAP_SOCKET and a readable SINK_CONFIG are required")
++		os.Exit(2)
++	}
++	if errConfig := current.configure(raw); errConfig != nil {
++		logf("config: %v", errConfig)
++		os.Exit(2)
++	}
++	waitForSecrets()
++	_ = os.Remove(socket)
++	ln, errListen := net.Listen("unix", socket)
++	if errListen != nil {
++		logf("listen: %v", errListen)
++		os.Exit(1)
++	}
++	_ = os.Chmod(socket, 0o600)
++
++	stop := make(chan os.Signal, 1)
++	signal.Notify(stop, syscall.SIGTERM, os.Interrupt)
++	go func() {
++		<-stop
++		_ = ln.Close()
++		// Stop reading: handlers finish the frame in hand and return.
++		workMu.Lock()
++		closing = true
++		for c := range conns {
++			_ = c.Close()
++		}
++		workMu.Unlock()
++	}()
++	for {
++		conn, errAccept := ln.Accept()
++		if errAccept != nil {
++			break
++		}
++		workMu.Lock()
++		if closing {
++			workMu.Unlock()
++			_ = conn.Close()
++			break
++		}
++		conns[conn] = true
++		handlers.Add(1)
++		workMu.Unlock()
++		go serve(conn)
++	}
++	// Order: no new frames, then every queued row stored, then a final flush.
++	handlers.Wait()
++	inFlight.Wait()
++	current.shutdown()
++}
++
++func serve(conn net.Conn) {
++	defer func() {
++		_ = conn.Close()
++		workMu.Lock()
++		delete(conns, conn)
++		workMu.Unlock()
++		handlers.Done()
++	}()
++	r := bufio.NewReaderSize(conn, 1<<20)
++	header := make([]byte, 4)
++	for {
++		if _, err := io.ReadFull(r, header); err != nil {
++			return
++		}
++		size := binary.BigEndian.Uint32(header)
++		if size == 0 || size > maxFrame {
++			logf("dropping connection: bad frame size %d", size)
++			return
++		}
++		frame := make([]byte, size)
++		if _, err := io.ReadFull(r, frame); err != nil {
++			return
++		}
++		m := int(frame[0])
++		if 1+m > len(frame) {
++			logf("dropping connection: bad frame")
++			return
++		}
++		handleFrame(string(frame[1:1+m]), frame[1+m:])
++	}
++}
++
++// waitForSecrets accepts no traffic until every secret source has been read,
++// so no row is redacted against a partial set (e.g. a credential file caught
++// mid-rewrite at startup). Until then the tap drops events.
++func waitForSecrets() {
++	r := current.currentRedactor()
++	if r == nil {
++		logf("secret redaction unavailable; not accepting traffic")
++		os.Exit(1)
++	}
++	for logged := false; ; time.Sleep(time.Second) {
++		failed := r.Failed()
++		if len(failed) == 0 {
++			return
++		}
++		if !logged {
++			logf("waiting for unreadable secret sources: %s", strings.Join(failed, ", "))
++			logged = true
++		}
++	}
++}
++
++func handleFrame(method string, payload []byte) {
++	defer func() {
++		if recover() != nil {
++			logf("%s: panic recovered", method)
++		}
++	}()
++	switch {
++	case !accepted[method]:
++		logf("ignoring unexpected method %q", method)
++		return
++	case method == "tap.hello":
++		logf("tap connected %s", payload)
++		return
++	case method == "tap.dropped":
++		// Some events of in-flight requests never arrived: mark them.
++		logf("tap dropped events %s", payload)
++		current.capture.markLost()
++		return
++	}
++	switch method {
++	case "request.complete":
++		// Closing the capture is cheap and keeps event order; redaction and
++		// the insert run on a worker.
++		var req completion
++		if err := json.Unmarshal(payload, &req); err != nil {
++			logf("%s: decode: %v", method, err)
++			return
++		}
++		row := current.capture.complete(req)
++		if row.Model == "" && row.RequestedModel == "" {
++			return // model listings and similar calls are not inference
++		}
++		size := len(row.RequestBody) + len(row.ResponseBody) + headersSize(row.RequestHeaders) + headersSize(row.ResponseHeaders)
++		for _, f := range requestStrings(&row) {
++			size += len(*f)
++		}
++		for _, c := range row.ResponseChunks {
++			size += len(c)
++		}
++		offload(size, func() {
++			if s := current.currentSink(); s != nil {
++				redactRequest(current.currentRedactor(), &row)
++				s.add(tableRequests, row)
++			}
++		})
++		return
++	case "usage.handle":
++		var record usageRecord
++		if err := json.Unmarshal(payload, &record); err != nil {
++			logf("%s: decode: %v", method, err)
++			return
++		}
++		row := usageRowFrom(record, current.capture.storeBodies())
++		size := headersSize(row.ResponseHeaders)
++		for _, f := range usageStrings(&row) {
++			size += len(*f)
++		}
++		offload(size, func() {
++			if s := current.currentSink(); s != nil {
++				redactUsage(current.currentRedactor(), &row)
++				s.add(tableUsage, row)
++			}
++		})
++		return
++	}
++	if _, err := current.handle(method, payload); err != nil {
++		logf("%s: %v", method, err)
++	}
++}
++
++// offload runs fn on a new worker once size bytes fit in the budget (a
++// single row larger than the budget waits until no other row is held).
++// redactRequest and redactUsage already fail closed on a panic.
++func offload(size int, fn func()) {
++	size += rowFloor
++	workerSlots <- struct{}{}
++	workMu.Lock()
++	for working > 0 && working+size > workBytes {
++		workCond.Wait()
++	}
++	working += size
++	workMu.Unlock()
++	inFlight.Add(1)
++	go func() {
++		defer func() {
++			_ = recover()
++			workMu.Lock()
++			working -= size
++			workCond.Broadcast()
++			workMu.Unlock()
++			<-workerSlots
++			inFlight.Done()
++		}()
++		fn()
++	}()
++}
++
++func headersSize(h map[string]string) int {
++	n := 0
++	for k, v := range h {
++		n += len(k) + len(v)
++	}
++	return n
++}
+diff --git a/plugins/clickhouse-sink/collector_test.go b/plugins/clickhouse-sink/collector_test.go
+new file mode 100644
+index 0000000..0956051
+--- /dev/null
++++ b/plugins/clickhouse-sink/collector_test.go
+@@ -0,0 +1,40 @@
++//go:build collector
++
++package main
++
++import (
++	"sync/atomic"
++	"testing"
++	"time"
++)
++
++func TestOffloadBoundsHeldBytesAndDrains(t *testing.T) {
++	var peak, held atomic.Int64
++	release := make(chan struct{})
++	start := func(size int) {
++		offload(size, func() {
++			if v := held.Add(int64(size)); v > peak.Load() {
++				peak.Store(v)
++			}
++			<-release
++			held.Add(-int64(size))
++		})
++	}
++	done := make(chan struct{})
++	go func() {
++		for i := 0; i < 6; i++ {
++			start(workBytes/4 - rowFloor) // the fifth waits for room
++		}
++		close(done)
++	}()
++	time.Sleep(100 * time.Millisecond)
++	if p := peak.Load(); p > workBytes {
++		t.Fatalf("held %d bytes, budget %d", p, workBytes)
++	}
++	close(release)
++	<-done
++	inFlight.Wait()
++	if working != 0 {
++		t.Fatalf("working = %d after drain", working)
++	}
++}
+diff --git a/plugins/clickhouse-sink/deriver/clickhouse.go b/plugins/clickhouse-sink/deriver/clickhouse.go
+index d42a0ff..0ac460b 100644
+--- a/plugins/clickhouse-sink/deriver/clickhouse.go
++++ b/plugins/clickhouse-sink/deriver/clickhouse.go
+@@ -10,6 +10,7 @@ import (
+ 	"net/url"
+ 	"regexp"
+ 	"strings"
++	"time"
+ )
+ 
+ // clickhouse is a minimal ClickHouse HTTP interface client.
+@@ -21,7 +22,10 @@ type clickhouse struct {
+ }
+ 
+ func newClickHouse(baseURL, user, password string) *clickhouse {
+-	return &clickhouse{baseURL: strings.TrimRight(baseURL, "/") + "/", user: user, password: password, http: &http.Client{}}
++	return &clickhouse{baseURL: strings.TrimRight(baseURL, "/") + "/", user: user, password: password,
++		// Idle connections close before ClickHouse's keep-alive timeout, so a
++		// pass never starts on a connection the server already dropped.
++		http: &http.Client{Transport: &http.Transport{Proxy: nil, IdleConnTimeout: 5 * time.Second}}}
+ }
+ 
+ // do runs one statement. With data != nil the statement goes into the URL and
+diff --git a/plugins/clickhouse-sink/main.go b/plugins/clickhouse-sink/main.go
+index 38541b0..16c17f7 100644
+--- a/plugins/clickhouse-sink/main.go
++++ b/plugins/clickhouse-sink/main.go
+@@ -1,3 +1,5 @@
++//go:build !collector
++
+ // Command clickhouse-sink is a CLIProxyAPI plugin that stores every proxied
+ // request, response and usage record in ClickHouse.
+ //
+diff --git a/plugins/clickhouse-sink/redact.go b/plugins/clickhouse-sink/redact.go
+index 30d3cd5..425d696 100644
+--- a/plugins/clickhouse-sink/redact.go
++++ b/plugins/clickhouse-sink/redact.go
+@@ -1,6 +1,11 @@
+ package main
+ 
+-import "github.com/api-token/Cli-Proxy-API-Management-Center/plugins/clickhouse-sink/redact"
++import (
++	"strings"
++	"unicode/utf8"
++
++	"github.com/api-token/Cli-Proxy-API-Management-Center/plugins/clickhouse-sink/redact"
++)
+ 
+ // redactRequest redacts every free-text field of a request row in place,
+ // including secrets split across stream chunks. On a panic, or without a
+@@ -16,13 +21,20 @@ func redactRequest(r *redact.Redactor, row *requestRow) {
+ 		failClosed(row)
+ 		return
+ 	}
+-	texts := []string{row.Error, row.RequestBody, row.ResponseBody}
++	normalizeRequest(row)
++	fields := requestStrings(row)
++	texts := []string{row.RequestBody, row.ResponseBody}
++	for _, f := range fields {
++		texts = append(texts, *f)
++	}
+ 	texts = append(texts, headerValues(row.RequestHeaders)...)
+ 	texts = append(texts, headerValues(row.ResponseHeaders)...)
+ 	texts = append(texts, row.ResponseChunks...)
+ 	rep := r.NewReplacer(texts)
+ 	res := redact.NewResult()
+-	row.Error = rep.Apply(row.Error, res)
++	for _, f := range fields {
++		*f = rep.Apply(*f, res)
++	}
+ 	row.RequestBody = rep.Apply(row.RequestBody, res)
+ 	row.ResponseBody = rep.Apply(row.ResponseBody, res)
+ 	for i := range row.ResponseChunks {
+@@ -35,31 +47,109 @@ func redactRequest(r *redact.Redactor, row *requestRow) {
+ 	row.RedactionRules = res.Rules()
+ }
+ 
++// requestStrings are the client-influenced metadata strings of a request row.
++func requestStrings(row *requestRow) []*string {
++	return []*string{&row.RequestID, &row.TraceID, &row.SourceFormat, &row.Model, &row.RequestedModel, &row.Path, &row.Outcome, &row.Error}
++}
++
+ func failClosed(row *requestRow) {
++	row.Path, row.Model, row.RequestedModel = "", "", ""
+ 	row.RequestBody, row.ResponseBody, row.Error = "", "", ""
+ 	row.ResponseChunks = nil
+ 	row.RequestHeaders, row.ResponseHeaders = nil, nil
+ 	row.RedactionCount, row.RedactionRules = -1, nil
+ }
+ 
+-// redactUsage redacts the free-text fields of a usage row in place.
++// redactUsage redacts every string field of a usage row in place. Several
++// come from the client or the credential (Source can fall back to the client
++// API key, SessionID can be "header:<X-Session-ID>"), so none is trusted.
+ func redactUsage(r *redact.Redactor, row *usageRow) {
++	fields := usageStrings(row)
+ 	defer func() {
+ 		if recover() != nil {
+-			row.FailureBody, row.ResponseHeaders = "", nil
++			for _, f := range fields {
++				*f = ""
++			}
++			row.ResponseHeaders = nil
+ 		}
+ 	}()
+ 	if r == nil {
+-		row.FailureBody, row.ResponseHeaders = "", nil
++		for _, f := range fields {
++			*f = ""
++		}
++		row.ResponseHeaders = nil
+ 		return
+ 	}
+-	texts := append([]string{row.FailureBody}, headerValues(row.ResponseHeaders)...)
++	for _, f := range fields {
++		*f = validUTF8(*f)
++	}
++	normalizeHeaders(row.ResponseHeaders)
++	texts := headerValues(row.ResponseHeaders)
++	for _, f := range fields {
++		texts = append(texts, *f)
++	}
+ 	rep := r.NewReplacer(texts)
+ 	res := redact.NewResult()
+-	row.FailureBody = rep.Apply(row.FailureBody, res)
++	for _, f := range fields {
++		*f = rep.Apply(*f, res)
++	}
+ 	redactHeaders(rep, row.ResponseHeaders, res)
+ }
+ 
++func usageStrings(row *usageRow) []*string {
++	return []*string{&row.RequestID, &row.TraceID, &row.SelectionID, &row.Provider, &row.ExecutorType, &row.BaseURL,
++		&row.Model, &row.Alias, &row.ResponseModel, &row.AccessProvider, &row.SessionID, &row.ParentSessionID,
++		&row.AuthID, &row.AuthIndex, &row.AuthType, &row.Source, &row.ReasoningEffort, &row.ServiceTier,
++		&row.EffectiveServiceTier, &row.ResponseServiceTier, &row.FailureBody}
++}
++
++// normalizeRequest makes every stored string valid UTF-8 before scanning.
++// encoding/json writes invalid bytes as U+FFFD anyway, so this only makes the
++// scanner see exactly what is stored; it also matters for RE2, which cannot
++// match across invalid bytes where Go's regexp can.
++func normalizeRequest(row *requestRow) {
++	for _, f := range requestStrings(row) {
++		*f = validUTF8(*f)
++	}
++	row.RequestBody = validUTF8(row.RequestBody)
++	row.ResponseBody = validUTF8(row.ResponseBody)
++	for i := range row.ResponseChunks {
++		row.ResponseChunks[i] = validUTF8(row.ResponseChunks[i])
++	}
++	normalizeHeaders(row.RequestHeaders)
++	normalizeHeaders(row.ResponseHeaders)
++}
++
++// validUTF8 replaces each invalid byte with U+FFFD, exactly as encoding/json
++// does when the row is serialized (strings.ToValidUTF8 would merge runs).
++func validUTF8(s string) string {
++	if utf8.ValidString(s) {
++		return s
++	}
++	var b strings.Builder
++	b.Grow(len(s) + 8)
++	for i := 0; i < len(s); {
++		r, size := utf8.DecodeRuneInString(s[i:])
++		if r == utf8.RuneError && size == 1 {
++			b.WriteString("\uFFFD")
++		} else {
++			b.WriteString(s[i : i+size])
++		}
++		i += size
++	}
++	return b.String()
++}
++
++func normalizeHeaders(h map[string]string) {
++	for k, v := range h {
++		nk := validUTF8(k)
++		if nk != k {
++			delete(h, k)
++		}
++		h[nk] = validUTF8(v)
++	}
++}
++
+ func headerValues(h map[string]string) []string {
+ 	out := make([]string, 0, len(h))
+ 	for _, v := range h {
+diff --git a/plugins/clickhouse-sink/redact/redact.go b/plugins/clickhouse-sink/redact/redact.go
+index dfcf395..5c11846 100644
+--- a/plugins/clickhouse-sink/redact/redact.go
++++ b/plugins/clickhouse-sink/redact/redact.go
+@@ -31,7 +31,9 @@ const (
+ 	minSecretLen = 12
+ 	// reloadInterval bounds how often secret files are checked for changes.
+ 	// CPA rotates OAuth access tokens, so the known set must follow them.
+-	reloadInterval = 30 * time.Second
++	reloadInterval = 5 * time.Second
++	// maxKnown bounds the remembered secrets (each value is held in four forms).
++	maxKnown = 100_000
+ 	// RuleKnown names matches of configured secret values.
+ 	RuleKnown = "known"
+ )
+@@ -63,6 +65,8 @@ type Redactor struct {
+ 	mtimes    map[string]time.Time
+ 	lastCheck time.Time
+ 	known     map[string]string // encoded form -> replacement
++	failed    []string          // sources the last load could not read
++	loaded    bool              // a full load has run since Configure
+ 	disabled  map[string]bool
+ 
+ 	detector *detect.Detector
+@@ -90,6 +94,7 @@ func (r *Redactor) Configure(files, disabledRules []string) {
+ 	}
+ 	r.lastCheck = time.Time{}
+ 	r.mtimes = map[string]time.Time{}
++	r.loaded = false
+ 	r.mu.Unlock()
+ 	r.reloadIfStale(time.Now())
+ }
+@@ -204,9 +209,13 @@ func (r *Redactor) reloadIfStale(now time.Time) {
+ 	old := r.mtimes
+ 	r.mu.Unlock()
+ 
+-	paths := expandFiles(files)
++	paths, failed := expandFiles(files)
+ 	mtimes := make(map[string]time.Time, len(paths))
+-	changed := len(paths) != len(old)
++	// The first load, and any load with failed sources before or now, always
++	// runs in full, so Failed() can never report an unread source as fine.
++	r.mu.Lock()
++	changed := !r.loaded || len(failed) > 0 || len(r.failed) > 0 || len(paths) != len(old)
++	r.mu.Unlock()
+ 	for _, p := range paths {
+ 		info, errStat := os.Stat(p)
+ 		if errStat != nil {
+@@ -223,25 +232,53 @@ func (r *Redactor) reloadIfStale(now time.Time) {
+ 		r.mu.Unlock()
+ 		return
+ 	}
+-	known := make(map[string]string)
++	// Start from everything seen before: a file read mid-rewrite or a rotated
++	// OAuth token must never shrink the set. Only an implausibly large set is reset.
++	r.mu.Lock()
++	known := make(map[string]string, len(r.known))
++	if len(r.known) < maxKnown {
++		for k, v := range r.known {
++			known[k] = v
++		}
++	}
++	r.mu.Unlock()
+ 	for _, p := range paths {
+-		for _, secret := range readSecrets(p) {
++		secrets, ok := readSecrets(p)
++		if !ok {
++			// Retried on the next check; meanwhile the set is incomplete.
++			delete(mtimes, p)
++			failed = append(failed, p)
++			continue
++		}
++		for _, secret := range secrets {
+ 			addKnown(known, secret)
+ 		}
+ 	}
+ 	r.mu.Lock()
+ 	r.known = known
++	r.failed = failed
++	r.loaded = true
+ 	r.mtimes = mtimes
+ 	r.lastCheck = now
+ 	r.mu.Unlock()
+ }
+ 
+-// expandFiles turns directories into the files inside them (one level).
+-func expandFiles(files []string) []string {
+-	var out []string
++// Failed lists the sources the last load could not read or parse; empty
++// means the known-secret set is complete.
++func (r *Redactor) Failed() []string {
++	r.reloadIfStale(time.Now())
++	r.mu.Lock()
++	defer r.mu.Unlock()
++	return r.failed
++}
++
++// expandFiles turns directories into the files inside them (one level), and
++// lists configured sources that are missing or unreadable.
++func expandFiles(files []string) (out, failed []string) {
+ 	for _, f := range files {
+ 		info, errStat := os.Stat(f)
+ 		if errStat != nil {
++			failed = append(failed, f)
+ 			continue
+ 		}
+ 		if !info.IsDir() {
+@@ -250,6 +287,7 @@ func expandFiles(files []string) []string {
+ 		}
+ 		entries, errRead := os.ReadDir(f)
+ 		if errRead != nil {
++			failed = append(failed, f)
+ 			continue
+ 		}
+ 		for _, e := range entries {
+@@ -259,7 +297,7 @@ func expandFiles(files []string) []string {
+ 		}
+ 	}
+ 	sort.Strings(out)
+-	return out
++	return out, failed
+ }
+ 
+ // addKnown registers a secret in the forms it can appear in a body: raw,
+@@ -282,25 +320,26 @@ func addKnown(known map[string]string, secret string) {
+ 
+ // readSecrets extracts credentials from one file, chosen by its name:
+ // .json and .yaml/.yml by key name, .env by value, anything else one per line.
+-func readSecrets(path string) []string {
++// ok is false when the file cannot be read or parsed, e.g. mid-rewrite.
++func readSecrets(path string) (secrets []string, ok bool) {
+ 	raw, errRead := os.ReadFile(path)
+ 	if errRead != nil {
+-		return nil
++		return nil, false
+ 	}
+ 	name := strings.ToLower(filepath.Base(path))
+ 	switch {
+ 	case strings.HasSuffix(name, ".json"):
+ 		var v any
+ 		if json.Unmarshal(raw, &v) != nil {
+-			return nil
++			return nil, false
+ 		}
+-		return collectSecrets(v, false)
++		return collectSecrets(v, false), true
+ 	case strings.HasSuffix(name, ".yaml") || strings.HasSuffix(name, ".yml"):
+ 		var v any
+ 		if yaml.Unmarshal(raw, &v) != nil {
+-			return nil
++			return nil, false
+ 		}
+-		return collectSecrets(v, false)
++		return collectSecrets(v, false), true
+ 	case name == ".env" || strings.HasSuffix(name, ".env"):
+ 		var out []string
+ 		sc := bufio.NewScanner(bytes.NewReader(raw))
+@@ -313,7 +352,7 @@ func readSecrets(path string) []string {
+ 				out = append(out, strings.Trim(strings.TrimSpace(value), `"'`))
+ 			}
+ 		}
+-		return out
++		return out, true
+ 	default:
+ 		var out []string
+ 		sc := bufio.NewScanner(bytes.NewReader(raw))
+@@ -322,7 +361,7 @@ func readSecrets(path string) []string {
+ 				out = append(out, line)
+ 			}
+ 		}
+-		return out
++		return out, true
+ 	}
+ }
+ 
+diff --git a/plugins/clickhouse-sink/redact_fields_test.go b/plugins/clickhouse-sink/redact_fields_test.go
+new file mode 100644
+index 0000000..8fb36a2
+--- /dev/null
++++ b/plugins/clickhouse-sink/redact_fields_test.go
+@@ -0,0 +1,125 @@
++package main
++
++import (
++	"encoding/json"
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++	"time"
++
++	"github.com/api-token/Cli-Proxy-API-Management-Center/plugins/clickhouse-sink/redact"
++)
++
++func TestUsageMetadataAndRewrittenSecretsStayRedacted(t *testing.T) {
++	secret := "sk-known-value-0123456789abcdef"
++	file := filepath.Join(t.TempDir(), "secrets.txt")
++	if err := os.WriteFile(file, []byte(secret+"\n"), 0o600); err != nil {
++		t.Fatal(err)
++	}
++	r, err := redact.New()
++	if err != nil {
++		t.Fatal(err)
++	}
++	r.Configure([]string{file}, nil)
++	// A credential file caught mid-rewrite must not forget what it held.
++	if err := os.WriteFile(file, nil, 0o600); err != nil {
++		t.Fatal(err)
++	}
++	r.Configure([]string{file}, nil)
++
++	row := usageRow{SessionID: "header:" + secret, Source: secret, AuthID: "a-" + secret}
++	redactUsage(r, &row)
++	for _, v := range []string{row.SessionID, row.Source, row.AuthID} {
++		if strings.Contains(v, secret) || !strings.Contains(v, "[REDACTED:known:") {
++			t.Fatalf("usage field not redacted: %q", v)
++		}
++	}
++	req := requestRow{Path: "/v1/messages?key=" + secret, RequestBody: `{"a":"` + secret + `"}`}
++	redactRequest(r, &req)
++	if strings.Contains(req.Path, secret) || strings.Contains(req.RequestBody, secret) {
++		t.Fatalf("request not redacted: %q %q", req.Path, req.RequestBody)
++	}
++}
++
++func TestHalfWrittenCredentialFileIsReportedUntilReadable(t *testing.T) {
++	dir := t.TempDir()
++	auth := filepath.Join(dir, "claude.json")
++	if err := os.WriteFile(auth, []byte(`{"access_token": "tok-abcdef0123456789`), 0o600); err != nil {
++		t.Fatal(err)
++	}
++	r, err := redact.New()
++	if err != nil {
++		t.Fatal(err)
++	}
++	r.Configure([]string{dir}, nil)
++	if failed := r.Failed(); len(failed) != 1 || failed[0] != auth {
++		t.Fatalf("Failed() = %v, want the half-written file", failed)
++	}
++	if err := os.WriteFile(auth, []byte(`{"access_token": "tok-abcdef0123456789"}`), 0o600); err != nil {
++		t.Fatal(err)
++	}
++	r.Configure([]string{dir}, nil)
++	if failed := r.Failed(); len(failed) != 0 {
++		t.Fatalf("Failed() = %v after the file became valid", failed)
++	}
++}
++
++func TestLostEventsMarkInFlightAndOrphanedRows(t *testing.T) {
++	c := newCapture()
++	c.begin(interceptRequest{RequestID: "r1", Body: []byte("{}")}, time.Now())
++	c.markLost()
++	if row := c.complete(completion{RequestID: "r1"}); !strings.Contains(row.Error, lostNote) {
++		t.Fatalf("in-flight row not marked: %q", row.Error)
++	}
++	if row := c.complete(completion{RequestID: "never-began"}); !strings.Contains(row.Error, lostNote) {
++		t.Fatalf("row without a captured request not marked: %q", row.Error)
++	}
++}
++
++func TestMissingSecretSourcesAreReported(t *testing.T) {
++	missing := filepath.Join(t.TempDir(), "auth")
++	r, err := redact.New()
++	if err != nil {
++		t.Fatal(err)
++	}
++	r.Configure([]string{missing}, nil)
++	if failed := r.Failed(); len(failed) != 1 || failed[0] != missing {
++		t.Fatalf("Failed() = %v, want the missing directory", failed)
++	}
++	if err := os.Mkdir(missing, 0o700); err != nil {
++		t.Fatal(err)
++	}
++	r.Configure([]string{missing}, nil)
++	if failed := r.Failed(); len(failed) != 0 {
++		t.Fatalf("Failed() = %v once the directory exists", failed)
++	}
++}
++
++// RE2 cannot match across invalid UTF-8 where Go's regexp can, so text is
++// normalized first; this token is followed by a stray 0xff byte.
++func TestSecretBeforeInvalidUTF8IsRedacted(t *testing.T) {
++	r, err := redact.New()
++	if err != nil {
++		t.Fatal(err)
++	}
++	r.Configure(nil, nil)
++	token := "sha256~" + "Zk3Q9mW2xV7pL4tR8nB1cH6jD5fG0sA2eY9uKp3Lq7R"
++	row := requestRow{RequestBody: "token " + token + "\xff rest", ResponseChunks: []string{"data: " + token + "\xff"}}
++	redactRequest(r, &row)
++	if strings.Contains(row.RequestBody, token) || strings.Contains(row.ResponseChunks[0], token) {
++		t.Fatalf("token survived: %q / %q", row.RequestBody, row.ResponseChunks[0])
++	}
++}
++
++func TestNormalizationMatchesJSONEncoding(t *testing.T) {
++	for _, in := range []string{"a\xff\xffb", "\xe2\x82", "ok \xc3\x28 \xf0\x9f\x98", "plain", ""} {
++		// What ClickHouse stores is the decoded JSON string.
++		raw, _ := json.Marshal(in)
++		var stored string
++		_ = json.Unmarshal(raw, &stored)
++		if got := validUTF8(in); got != stored {
++			t.Fatalf("%q: normalized %q, stored %q", in, got, stored)
++		}
++	}
++}
+diff --git a/plugins/clickhouse-sink/schema.sql b/plugins/clickhouse-sink/schema.sql
+index 9fcb266..6dbd9a0 100644
+--- a/plugins/clickhouse-sink/schema.sql
++++ b/plugins/clickhouse-sink/schema.sql
+@@ -23,15 +23,17 @@ CREATE TABLE IF NOT EXISTS {db}.requests
+     status_code      UInt16,
+     error            String COMMENT 'Terminal error message, redacted',
+     request_headers  Map(String, String) COMMENT 'Client request headers, lower-case; credentials removed, values redacted',
+-    request_body     String COMMENT 'Client request body as sent, redacted' CODEC(ZSTD(3)),
++    request_body     String COMMENT 'Client request body as sent, redacted' CODEC(ZSTD(3)) TTL toDate(started_at) + INTERVAL 3 DAY,
+     response_headers Map(String, String) COMMENT 'Response headers delivered to the client, redacted',
+-    response_body    String COMMENT 'Non-streaming response body, redacted; empty for streams' CODEC(ZSTD(3)),
+-    response_chunks  Array(String) COMMENT 'Stream chunks exactly as delivered (one element each), redacted; empty for non-streams' CODEC(ZSTD(3)),
++    response_body    String COMMENT 'Non-streaming response body, redacted; empty for streams' CODEC(ZSTD(3)) TTL toDate(started_at) + INTERVAL 3 DAY,
++    response_chunks  Array(String) COMMENT 'Stream chunks exactly as delivered (one element each), redacted; empty for non-streams' CODEC(ZSTD(3)) TTL toDate(started_at) + INTERVAL 3 DAY,
+     redaction_count  Int32 COMMENT 'Secrets replaced in this row; -1 means redaction failed and bodies were emptied',
+     redaction_rules  Array(LowCardinality(String)) COMMENT 'Distinct rule names that matched (known-value, gitleaks rule IDs)'
+ )
+ ENGINE = MergeTree
+-PARTITION BY toYYYYMM(started_at)
++-- Daily partitions with a whole-day body TTL: a day's bodies all expire at
++-- once and its part is rewritten once, not a month-sized part every few hours.
++PARTITION BY toDate(started_at)
+ ORDER BY (started_at, request_id)
+ SETTINGS non_replicated_deduplication_window = 1000
+ COMMENT 'Raw client requests and responses, one row per request. Source of truth; large bodies, query request_facts/messages first.'
+diff --git a/plugins/clickhouse-sink/sink.go b/plugins/clickhouse-sink/sink.go
+index 7fa53f2..d4be2a2 100644
+--- a/plugins/clickhouse-sink/sink.go
++++ b/plugins/clickhouse-sink/sink.go
+@@ -96,8 +96,15 @@ func newSink(cfg sinkConfig) *sink {
+ 	return &sink{
+ 		cfg:     cfg,
+ 		pending: make(map[string][][]byte),
+-		client:  &http.Client{Timeout: httpTimeout},
+-		kick:    make(chan struct{}, 1),
++		// Rows and the password go only to the configured URL: no redirects,
++		// no proxy from the environment.
++		client: &http.Client{
++			Timeout: httpTimeout,
++			// Idle connections close before ClickHouse's keep-alive timeout.
++			Transport:     &http.Transport{Proxy: nil, IdleConnTimeout: 5 * time.Second},
++			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
++		},
++		kick: make(chan struct{}, 1),
+ 	}
+ }
+ 
+@@ -315,12 +322,18 @@ func (s *sink) exec(cfg sinkConfig, params url.Values, body string) error {
+ 	}
+ 	resp, errDo := s.client.Do(req)
+ 	if errDo != nil {
++		// The error text repeats the URL, which holds the query; keep only the cause.
++		var urlErr *url.Error
++		if errors.As(errDo, &urlErr) {
++			return fmt.Errorf("ClickHouse request failed: %w", urlErr.Err)
++		}
+ 		return errDo
+ 	}
+ 	defer func() { _ = resp.Body.Close() }()
+ 	if resp.StatusCode != http.StatusOK {
+-		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+-		return httpError{status: resp.StatusCode, msg: fmt.Sprintf("ClickHouse %s: %s", resp.Status, strings.TrimSpace(string(msg)))}
++		// Error text can quote the rejected rows, so only the code reaches the log.
++		code := resp.Header.Get("X-ClickHouse-Exception-Code")
++		return httpError{status: resp.StatusCode, msg: fmt.Sprintf("ClickHouse %s: exception code %q", resp.Status, code)}
+ 	}
+ 	// ClickHouse can report an error after a 200 header; only a fully read
+ 	// body counts as success.

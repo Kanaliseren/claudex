@@ -1,9 +1,12 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFile, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { configure, dashboardSummary } from "../src/settings.js";
 import { readProxyKey, readProxyOptions, readProxySummary, writeProxyConfig } from "../src/config.js";
-import { resolvePaths } from "../src/paths.js";
+import { platformKey, resolvePaths } from "../src/paths.js";
+import { checkUpdate } from "../src/update-check.js";
 import { fixtureManifest, temporaryRoot } from "../test-support/helpers.js";
 
 test("dashboard and sticky routing survive regeneration and upstream key hashing", async (t) => {
@@ -26,7 +29,7 @@ test("dashboard and sticky routing survive regeneration and upstream key hashing
   await writeFile(paths.proxyConfig, (await readFile(paths.proxyConfig, "utf8")).replace(key, hash));
   await writeProxyConfig(paths, manifest);
   assert.deepEqual(await readProxyOptions(paths.proxyConfig), {
-    dashboard: true, managementKey: hash, sessionAffinity: true, strategy: "fill-first",
+    dashboard: true, managementKey: hash, sessionAffinity: true, strategy: "fill-first", requestLog: false, tapPaused: false,
   });
   assert.equal(await readProxyKey(paths.proxyConfig), proxyKey);
   assert.equal((await readProxySummary(paths.proxyConfig)).remoteManagementDisabled, true);
@@ -41,10 +44,63 @@ test("a failed service restart restores the prior configuration", { skip: proces
   const paths = resolvePaths({ env: { CLAUDEX_HOME: root }, home: root });
   const manifest = fixtureManifest();
   await writeProxyConfig(paths, manifest);
-  paths.systemdUnit = paths.proxyConfig;
+  paths.systemdUnit = join(root, "claudex.service");
+  await writeFile(paths.systemdUnit, "[Service]\n");
   const previous = await readFile(paths.proxyConfig, "utf8");
   await assert.rejects(configure(paths, manifest, {
     dashboard: true, platform: "linux", runCommand: async () => { throw new Error("restart failed"); },
   }), /restart failed/);
   assert.equal(await readFile(paths.proxyConfig, "utf8"), previous);
+});
+
+test("request logging renders only the pinned tap and survives regeneration", { skip: process.platform === "win32" }, async (t) => {
+  const root = await temporaryRoot(t);
+  const paths = resolvePaths({ env: { CLAUDEX_HOME: root }, home: root });
+  const library = Buffer.from("reviewed build");
+  const fixture = fixtureManifest();
+  const manifest = {
+    ...fixture,
+    proxy: { ...fixture.proxy, assets: { [platformKey()]: { url: "https://example.invalid/proxy", sha256: "0".repeat(64) } } },
+    plugins: { "claudex-tap": { assets: { [platformKey()]: { sha256: createHash("sha256").update(library).digest("hex") } } } },
+  };
+  await writeProxyConfig(paths, manifest);
+  const tap = join(paths.pluginsDir, "claudex-tap.so");
+
+  await assert.rejects(configure(paths, manifest, { requestLog: true }), /must hold only claudex-tap\.so/);
+  await mkdir(join(paths.pluginsDir, "linux", "amd64"), { recursive: true });
+  await writeFile(tap, "tampered build");
+  await assert.rejects(configure(paths, manifest, { requestLog: true }), /checksum mismatch/);
+  await writeFile(tap, library);
+  // The proxy also loads <dir>/<os>/<arch>, where a versioned file would win.
+  await writeFile(join(paths.pluginsDir, "linux", "amd64", "claudex-tap-v9.so"), "shadow");
+  await assert.rejects(configure(paths, manifest, { requestLog: true }), /must hold only/);
+  await rm(join(paths.pluginsDir, "linux"), { recursive: true });
+
+  await configure(paths, manifest, { requestLog: true });
+  await writeProxyConfig(paths, manifest);
+  const config = await readFile(paths.proxyConfig, "utf8");
+  assert.ok(config.endsWith(`
+plugins:
+  enabled: true
+  dir: ${JSON.stringify(paths.pluginsDir)}
+  configs:
+    claudex-tap:
+      enabled: true
+      socket: ${JSON.stringify(paths.tapSocket)}
+`));
+  assert.equal((await readProxyOptions(paths.proxyConfig)).requestLog, true);
+  assert.equal((await checkUpdate(paths, manifest)).configMatchesChannel, true);
+
+  // A tap that no longer matches its pin pauses logging on the next write
+  // (e.g. claudex update) instead of blocking it; an explicit enable resumes.
+  await writeFile(tap, "changed build");
+  assert.equal((await writeProxyConfig(paths, manifest)).requestLog, "paused");
+  assert.match(await readFile(paths.proxyConfig, "utf8"), /^plugins:\n  enabled: false\n/m);
+  await writeFile(tap, library);
+  assert.equal((await writeProxyConfig(paths, manifest)).requestLog, "paused");
+  await configure(paths, manifest, { requestLog: true });
+  assert.equal((await readProxyOptions(paths.proxyConfig)).tapPaused, false);
+
+  await configure(paths, manifest, { requestLog: false });
+  assert.doesNotMatch(await readFile(paths.proxyConfig, "utf8"), /plugins:/);
 });

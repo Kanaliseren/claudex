@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
-import { readProxyKey, readProxyOptions, readProxySummary, writeProxyConfig } from "./config.js";
+import { readProxyKey, readProxyOptions, readProxySummary, verifyTap, writeProxyConfig } from "./config.js";
 import { restartService } from "./service.js";
 import { atomicWrite, exists, sleep, withFileLock } from "./util.js";
 import { assertOwnedProxy } from "./shared.js";
@@ -12,8 +12,13 @@ export async function configure(paths, manifest, options = {}) {
     const previous = await readFile(paths.proxyConfig, "utf8");
     const { port } = await readProxySummary(paths.proxyConfig);
     const settings = await readProxyOptions(paths.proxyConfig);
-    for (const name of ["dashboard", "sessionAffinity", "strategy"]) {
+    for (const name of ["dashboard", "sessionAffinity", "strategy", "requestLog"]) {
       if (options[name] !== undefined) settings[name] = options[name];
+    }
+    if (options.requestLog) {
+      // An explicit enable fails loudly on a missing or changed tap, and resumes a paused one.
+      await verifyTap(paths, manifest);
+      settings.tapPaused = false;
     }
     if (settings.dashboard && !settings.managementKey) {
       const key = (await exists(paths.dashboardKey))
@@ -59,5 +64,6 @@ export async function dashboardSummary(paths) {
     keyFile: paths.dashboardKey,
     strategy: options.strategy,
     sessionAffinity: options.sessionAffinity,
+    requestLog: options.requestLog ? (options.tapPaused ? "paused" : "enabled") : "disabled",
   };
 }

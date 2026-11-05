@@ -2,10 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { createHash } from "node:crypto";
 import { runIsolatedCanary } from "../src/canary.js";
-import { readProxyKey } from "../src/config.js";
+import { readProxyKey, readProxyOptions, writeProxyConfig } from "../src/config.js";
 import { login, rollback, setup, upgrade } from "../src/lifecycle.js";
-import { resolvePaths } from "../src/paths.js";
+import { platformKey, resolvePaths } from "../src/paths.js";
 import { loadState } from "../src/state.js";
 import { fixtureManifest, temporaryRoot } from "../test-support/helpers.js";
 
@@ -145,6 +146,37 @@ test("login selects Codex or native Claude OAuth explicitly", async (t) => {
 async function writeExecutable(path, contents) {
   await writeFile(path, contents, { mode: 0o755 });
   if (process.platform !== "win32") await chmod(path, 0o755);
+}
+
+for (const [name, registers, expected] of [["registers", true, "ok"], ["rejects", false, "incompatible"]]) {
+  test(`upgrade keeps request logging only when the candidate ${name} the tap`, { skip: process.platform === "win32" }, async (t) => {
+    const root = await temporaryRoot(t);
+    const paths = resolvePaths({ env: { CLAUDEX_HOME: root }, home: root, platform: "linux" });
+    const library = Buffer.from("reviewed tap");
+    const manifest = {
+      ...fixtureManifest(),
+      plugins: { "claudex-tap": { assets: { [platformKey()]: { sha256: createHash("sha256").update(library).digest("hex") } } } },
+    };
+    const first = join(root, "fake-proxy-v1");
+    await writeExecutable(first, '#!/bin/sh\nif [ "$1" = "-h" ]; then echo "v1 -codex-login -codex-device-login -config"; fi\n');
+    await setup(paths, manifest, { binary: first, noService: true });
+    await mkdir(paths.pluginsDir, { recursive: true });
+    await writeFile(join(paths.pluginsDir, "claudex-tap.so"), library);
+    await writeProxyConfig(paths, manifest, { requestLog: true });
+
+    // The host prints this line only after accepting the plugin's registration.
+    const announce = registers
+      ? 'if (/^plugins:\\n  enabled: true/m.test(config)) console.log("pluginhost: plugin registered plugin_id=claudex-tap path=x");\n'
+      : "";
+    const second = join(root, "fake-proxy-v2.mjs");
+    await writeExecutable(second, fakeCanaryServer.replace("const server =", `${announce}const server =`));
+
+    const result = await upgrade(paths, manifest, { binary: second });
+    assert.equal(result.canary.requestLog, expected);
+    const config = await readFile(paths.proxyConfig, "utf8");
+    assert.match(config, new RegExp(`^plugins:\\n  enabled: ${registers}\\n`, "m"));
+    assert.equal((await readProxyOptions(paths.proxyConfig)).requestLog, true);
+  });
 }
 
 const fakeCanaryServer = `#!/usr/bin/env node

@@ -187,10 +187,10 @@ index 0000000..716f9a8
 +}
 diff --git a/plugins/clickhouse-sink/collector.go b/plugins/clickhouse-sink/collector.go
 new file mode 100644
-index 0000000..d550906
+index 0000000..5ac1d08
 --- /dev/null
 +++ b/plugins/clickhouse-sink/collector.go
-@@ -0,0 +1,250 @@
+@@ -0,0 +1,276 @@
 +//go:build collector
 +
 +// Collector mode: the same capture, redaction and ClickHouse sink, run as its
@@ -210,6 +210,7 @@ index 0000000..d550906
 +	"net"
 +	"os"
 +	"os/signal"
++	"runtime"
 +	"strings"
 +	"sync"
 +	"syscall"
@@ -220,16 +221,23 @@ index 0000000..d550906
 +// body never stalls the socket reader (the tap drops events after 5 s of
 +// stall). Rows held by workers count against workBytes; past it, the reader
 +// waits, which is the only point where the collector applies back-pressure.
-+const workBytes = 256 << 20
++const (
++	workBytes = 256 << 20
++	// rowFloor is charged for every row on top of its data, covering scan
++	// allocations and small fields, so many small rows are bounded too.
++	rowFloor = 64 << 10
++)
 +
 +var (
 +	workMu   sync.Mutex
 +	workCond = sync.NewCond(&workMu)
 +	working  int // bytes of rows held by workers
 +	inFlight sync.WaitGroup
-+	handlers sync.WaitGroup
-+	conns    = map[net.Conn]bool{}
-+	closing  bool
++	// workerSlots caps concurrent workers independently of bytes.
++	workerSlots = make(chan struct{}, runtime.NumCPU())
++	handlers    sync.WaitGroup
++	conns       = map[net.Conn]bool{}
++	closing     bool
 +)
 +
 +// maxFrame bounds one event: the tap's 64 MiB payload limit plus the method.
@@ -387,7 +395,10 @@ index 0000000..d550906
 +		if row.Model == "" && row.RequestedModel == "" {
 +			return // model listings and similar calls are not inference
 +		}
-+		size := len(row.RequestBody) + len(row.ResponseBody) + len(row.Error)
++		size := len(row.RequestBody) + len(row.ResponseBody) + headersSize(row.RequestHeaders) + headersSize(row.ResponseHeaders)
++		for _, f := range requestStrings(&row) {
++			size += len(*f)
++		}
 +		for _, c := range row.ResponseChunks {
 +			size += len(c)
 +		}
@@ -405,7 +416,11 @@ index 0000000..d550906
 +			return
 +		}
 +		row := usageRowFrom(record, current.capture.storeBodies())
-+		offload(len(row.FailureBody), func() {
++		size := headersSize(row.ResponseHeaders)
++		for _, f := range usageStrings(&row) {
++			size += len(*f)
++		}
++		offload(size, func() {
 +			if s := current.currentSink(); s != nil {
 +				redactUsage(current.currentRedactor(), &row)
 +				s.add(tableUsage, row)
@@ -422,6 +437,8 @@ index 0000000..d550906
 +// single row larger than the budget waits until no other row is held).
 +// redactRequest and redactUsage already fail closed on a panic.
 +func offload(size int, fn func()) {
++	size += rowFloor
++	workerSlots <- struct{}{}
 +	workMu.Lock()
 +	for working > 0 && working+size > workBytes {
 +		workCond.Wait()
@@ -436,14 +453,23 @@ index 0000000..d550906
 +			working -= size
 +			workCond.Broadcast()
 +			workMu.Unlock()
++			<-workerSlots
 +			inFlight.Done()
 +		}()
 +		fn()
 +	}()
 +}
++
++func headersSize(h map[string]string) int {
++	n := 0
++	for k, v := range h {
++		n += len(k) + len(v)
++	}
++	return n
++}
 diff --git a/plugins/clickhouse-sink/collector_test.go b/plugins/clickhouse-sink/collector_test.go
 new file mode 100644
-index 0000000..76d964e
+index 0000000..0956051
 --- /dev/null
 +++ b/plugins/clickhouse-sink/collector_test.go
 @@ -0,0 +1,40 @@
@@ -472,7 +498,7 @@ index 0000000..76d964e
 +	done := make(chan struct{})
 +	go func() {
 +		for i := 0; i < 6; i++ {
-+			start(workBytes / 4) // the fifth waits for room
++			start(workBytes/4 - rowFloor) // the fifth waits for room
 +		}
 +		close(done)
 +	}()
@@ -522,14 +548,27 @@ index 38541b0..16c17f7 100644
  // request, response and usage record in ClickHouse.
  //
 diff --git a/plugins/clickhouse-sink/redact.go b/plugins/clickhouse-sink/redact.go
-index 30d3cd5..aa20728 100644
+index 30d3cd5..027de57 100644
 --- a/plugins/clickhouse-sink/redact.go
 +++ b/plugins/clickhouse-sink/redact.go
-@@ -16,13 +16,19 @@ func redactRequest(r *redact.Redactor, row *requestRow) {
+@@ -1,6 +1,10 @@
+ package main
+ 
+-import "github.com/api-token/Cli-Proxy-API-Management-Center/plugins/clickhouse-sink/redact"
++import (
++	"strings"
++
++	"github.com/api-token/Cli-Proxy-API-Management-Center/plugins/clickhouse-sink/redact"
++)
+ 
+ // redactRequest redacts every free-text field of a request row in place,
+ // including secrets split across stream chunks. On a panic, or without a
+@@ -16,13 +20,20 @@ func redactRequest(r *redact.Redactor, row *requestRow) {
  		failClosed(row)
  		return
  	}
 -	texts := []string{row.Error, row.RequestBody, row.ResponseBody}
++	normalizeRequest(row)
 +	fields := requestStrings(row)
 +	texts := []string{row.RequestBody, row.ResponseBody}
 +	for _, f := range fields {
@@ -547,7 +586,7 @@ index 30d3cd5..aa20728 100644
  	row.RequestBody = rep.Apply(row.RequestBody, res)
  	row.ResponseBody = rep.Apply(row.ResponseBody, res)
  	for i := range row.ResponseChunks {
-@@ -35,31 +41,58 @@ func redactRequest(r *redact.Redactor, row *requestRow) {
+@@ -35,31 +46,89 @@ func redactRequest(r *redact.Redactor, row *requestRow) {
  	row.RedactionRules = res.Rules()
  }
  
@@ -588,6 +627,10 @@ index 30d3cd5..aa20728 100644
  		return
  	}
 -	texts := append([]string{row.FailureBody}, headerValues(row.ResponseHeaders)...)
++	for _, f := range fields {
++		*f = strings.ToValidUTF8(*f, "\uFFFD")
++	}
++	normalizeHeaders(row.ResponseHeaders)
 +	texts := headerValues(row.ResponseHeaders)
 +	for _, f := range fields {
 +		texts = append(texts, *f)
@@ -606,6 +649,33 @@ index 30d3cd5..aa20728 100644
 +		&row.Model, &row.Alias, &row.ResponseModel, &row.AccessProvider, &row.SessionID, &row.ParentSessionID,
 +		&row.AuthID, &row.AuthIndex, &row.AuthType, &row.Source, &row.ReasoningEffort, &row.ServiceTier,
 +		&row.EffectiveServiceTier, &row.ResponseServiceTier, &row.FailureBody}
++}
++
++// normalizeRequest makes every stored string valid UTF-8 before scanning.
++// encoding/json writes invalid bytes as U+FFFD anyway, so this only makes the
++// scanner see exactly what is stored; it also matters for RE2, which cannot
++// match across invalid bytes where Go's regexp can.
++func normalizeRequest(row *requestRow) {
++	for _, f := range requestStrings(row) {
++		*f = strings.ToValidUTF8(*f, "\uFFFD")
++	}
++	row.RequestBody = strings.ToValidUTF8(row.RequestBody, "\uFFFD")
++	row.ResponseBody = strings.ToValidUTF8(row.ResponseBody, "\uFFFD")
++	for i := range row.ResponseChunks {
++		row.ResponseChunks[i] = strings.ToValidUTF8(row.ResponseChunks[i], "\uFFFD")
++	}
++	normalizeHeaders(row.RequestHeaders)
++	normalizeHeaders(row.ResponseHeaders)
++}
++
++func normalizeHeaders(h map[string]string) {
++	for k, v := range h {
++		nk := strings.ToValidUTF8(k, "\uFFFD")
++		if nk != k {
++			delete(h, k)
++		}
++		h[nk] = strings.ToValidUTF8(v, "\uFFFD")
++	}
 +}
 +
  func headerValues(h map[string]string) []string {
@@ -788,10 +858,10 @@ index dfcf395..5c11846 100644
  
 diff --git a/plugins/clickhouse-sink/redact_fields_test.go b/plugins/clickhouse-sink/redact_fields_test.go
 new file mode 100644
-index 0000000..4968d12
+index 0000000..ba0bb30
 --- /dev/null
 +++ b/plugins/clickhouse-sink/redact_fields_test.go
-@@ -0,0 +1,96 @@
+@@ -0,0 +1,112 @@
 +package main
 +
 +import (
@@ -886,6 +956,22 @@ index 0000000..4968d12
 +	r.Configure([]string{missing}, nil)
 +	if failed := r.Failed(); len(failed) != 0 {
 +		t.Fatalf("Failed() = %v once the directory exists", failed)
++	}
++}
++
++// RE2 cannot match across invalid UTF-8 where Go's regexp can, so text is
++// normalized first; this token is followed by a stray 0xff byte.
++func TestSecretBeforeInvalidUTF8IsRedacted(t *testing.T) {
++	r, err := redact.New()
++	if err != nil {
++		t.Fatal(err)
++	}
++	r.Configure(nil, nil)
++	token := "sha256~" + "Zk3Q9mW2xV7pL4tR8nB1cH6jD5fG0sA2eY9uKp3Lq7R"
++	row := requestRow{RequestBody: "token " + token + "\xff rest", ResponseChunks: []string{"data: " + token + "\xff"}}
++	redactRequest(r, &row)
++	if strings.Contains(row.RequestBody, token) || strings.Contains(row.ResponseChunks[0], token) {
++		t.Fatalf("token survived: %q / %q", row.RequestBody, row.ResponseChunks[0])
 +	}
 +}
 diff --git a/plugins/clickhouse-sink/schema.sql b/plugins/clickhouse-sink/schema.sql

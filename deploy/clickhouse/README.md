@@ -50,6 +50,23 @@ curl -s -K <(printf 'user = "claudex_reader:%s"\n' "$(cat ~/.config/claudex/clic
   "SELECT started_at, role, substring(text, 1, 200) FROM cliproxy.messages WHERE text ILIKE '%migration%' ORDER BY started_at DESC LIMIT 20"
 ```
 
+## Disk use and retention
+
+Agents resend the whole conversation on every turn, so raw request bodies grow
+with the square of a session's length (a busy day here is ~2 billion input
+tokens, ~8 GB of raw JSON). The stack keeps what matters and drops the rest:
+
+- `messages` / `request_facts` keep each turn's new input and the reply once,
+  forever.
+- `usage` and the metadata columns of `requests` stay forever.
+- Raw `request_body`, `response_body` and `response_chunks` expire after
+  14 days (column TTL in `clickhouse-sink.patch`).
+- ClickHouse's own metric and trace tables are off (`config.xml`); they would
+  otherwise add several GB a day. `query_log` keeps 7 days.
+
+Never run the deriver's `--rebuild` once raw bodies have expired: it would
+re-derive those requests from empty bodies and lose their messages.
+
 ## What is not covered
 
 - Secrets the redactor cannot recognise: values not in the config or auth
@@ -62,8 +79,8 @@ curl -s -K <(printf 'user = "claudex_reader:%s"\n' "$(cat ~/.config/claudex/clic
 
 ## Local patch
 
-`clickhouse-sink.patch` hardens the pinned plugin after review: each request's
-capture is capped at 64 MiB (512 MiB across in-flight requests; larger ones are
+`clickhouse-sink.patch` hardens the pinned plugin after review: raw bodies
+expire after 14 days, each request's capture is capped at 64 MiB (512 MiB across in-flight requests; larger ones are
 stored as metadata only), the ClickHouse client ignores redirects and proxy
 environment variables, the usage `source` and `base_url` fields are redacted
 (`source` can fall back to the client API key), and ClickHouse error text, which

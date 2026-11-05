@@ -75,7 +75,7 @@
       "builder": "golang:1.26-bookworm@sha256:29f741a2adcfacecf72c6f1f8275fad87a33d4080a459b71dffebf1b324abd8b",
       "assets": {
         "linux-x64": {
-          "sha256": "e9460cb8f5aaf83552aa929b1a8585e1da2442b52245b0c27294fb6cf2efeefb"
+          "sha256": "c64a15be6886f514f5263f68838a5b2dab2b4d729fbe79be3f3f054cb68b0b3c"
         }
       }
     }

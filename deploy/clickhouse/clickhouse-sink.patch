@@ -197,6 +197,24 @@ index 30d3cd5..5e19fef 100644
  	redactHeaders(rep, row.ResponseHeaders, res)
  }
  
+diff --git a/plugins/clickhouse-sink/schema.sql b/plugins/clickhouse-sink/schema.sql
+index 9fcb266..ad01a96 100644
+--- a/plugins/clickhouse-sink/schema.sql
++++ b/plugins/clickhouse-sink/schema.sql
+@@ -23,10 +23,10 @@ CREATE TABLE IF NOT EXISTS {db}.requests
+     status_code      UInt16,
+     error            String COMMENT 'Terminal error message, redacted',
+     request_headers  Map(String, String) COMMENT 'Client request headers, lower-case; credentials removed, values redacted',
+-    request_body     String COMMENT 'Client request body as sent, redacted' CODEC(ZSTD(3)),
++    request_body     String COMMENT 'Client request body as sent, redacted' CODEC(ZSTD(3)) TTL toDateTime(started_at) + INTERVAL 14 DAY,
+     response_headers Map(String, String) COMMENT 'Response headers delivered to the client, redacted',
+-    response_body    String COMMENT 'Non-streaming response body, redacted; empty for streams' CODEC(ZSTD(3)),
+-    response_chunks  Array(String) COMMENT 'Stream chunks exactly as delivered (one element each), redacted; empty for non-streams' CODEC(ZSTD(3)),
++    response_body    String COMMENT 'Non-streaming response body, redacted; empty for streams' CODEC(ZSTD(3)) TTL toDateTime(started_at) + INTERVAL 14 DAY,
++    response_chunks  Array(String) COMMENT 'Stream chunks exactly as delivered (one element each), redacted; empty for non-streams' CODEC(ZSTD(3)) TTL toDateTime(started_at) + INTERVAL 14 DAY,
+     redaction_count  Int32 COMMENT 'Secrets replaced in this row; -1 means redaction failed and bodies were emptied',
+     redaction_rules  Array(LowCardinality(String)) COMMENT 'Distinct rule names that matched (known-value, gitleaks rule IDs)'
+ )
 diff --git a/plugins/clickhouse-sink/sink.go b/plugins/clickhouse-sink/sink.go
 index 7fa53f2..d02effa 100644
 --- a/plugins/clickhouse-sink/sink.go

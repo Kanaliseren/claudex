@@ -75,6 +75,9 @@ test("request logging renders only the pinned tap and survives regeneration", { 
   await writeFile(join(paths.pluginsDir, "linux", "amd64", "claudex-tap-v9.so"), "shadow");
   await assert.rejects(configure(paths, manifest, { requestLog: true }), /must hold only/);
   await rm(join(paths.pluginsDir, "linux"), { recursive: true });
+  // The proxy's own copy cache, which it never loads from.
+  await mkdir(join(paths.pluginsDir, ".shadow"));
+  await writeFile(join(paths.pluginsDir, ".shadow", "cliproxy-plugin-claudex-tap-0123.so"), library);
 
   await configure(paths, manifest, { requestLog: true });
   await writeProxyConfig(paths, manifest);

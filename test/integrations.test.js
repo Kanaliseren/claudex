@@ -20,7 +20,7 @@ test("T3 integration restores native models, clears legacy overrides, and protec
       claudeAgent: {
         driver: "claudeAgent",
         future: 42,
-        config: { futureConfig: true, customModels: ["company-private-model", "gpt-6-astra", "gpt-6-sol", "gpt-5.6-sol", "gpt-6.1-sol"] },
+        config: { futureConfig: true, customModels: ["company-private-model", "claude-fable-5-1", "gpt-6-astra", "gpt-6-sol", "gpt-5.6-sol", "gpt-6.1-sol"] },
         environment: [
           { name: "KEEP_ME", value: "yes", sensitive: false },
           { name: "ANTHROPIC_MODEL", value: "gpt-6-astra", sensitive: false },
@@ -48,7 +48,7 @@ test("T3 integration restores native models, clears legacy overrides, and protec
   assert.deepEqual(updated.defaultModelSelection, { instanceId: "claudeAgent", model: "claude-sonnet-5-5" });
   assert.deepEqual(updated.providerInstances.claudeAgent.config, {
     futureConfig: true,
-    customModels: ["company-private-model", "claude-opus-5", "claude-fable-5-1"],
+    customModels: ["company-private-model", "claude-opus-5", "claude-fable-5-2"],
   });
   assert.deepEqual(updated.providerInstances.futureProvider, { keep: true });
   assert.deepEqual(Object.keys(env).sort(), ["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "API_TIMEOUT_MS", "ENABLE_TOOL_SEARCH", "KEEP_ME"]);

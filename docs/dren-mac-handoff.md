@@ -19,7 +19,7 @@ the same subscription quotas; the setup does not duplicate their allowances.
    | Haiku | Native Claude Haiku |
    | Sonnet | Native Claude Sonnet |
    | Opus 5 | Native Claude Opus 5 |
-   | Fable 5.1 | Native Claude Fable 5.1 |
+   | Fable 5.2 | Native Claude Fable 5.2 |
 
 3. Open **Limits**. The **Claudex** source lists the shared accounts individually.
    Reopen the view after a refresh if you have just connected.

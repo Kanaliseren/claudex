@@ -2,51 +2,51 @@
   "schemaVersion": 1,
   "channel": "stable",
   "proxy": {
-    "version": "v8.0.56",
-    "upstreamVersion": "v8.0.56",
+    "version": "v8.0.76",
+    "upstreamVersion": "v8.0.76",
     "repository": "router-for-me/CLIProxyAPI",
-    "commit": "585f97deac9aa57c700301221fb1a7085e1827cc",
-    "tag": "v8.0.56",
+    "commit": "7df56074b252384d878ec4fca840552c6fb5236e",
+    "tag": "v8.0.76",
     "assets": {
       "linux-x64": {
-        "url": "https://github.com/router-for-me/CLIProxyAPI/releases/download/v8.0.56/CLIProxyAPI_8.0.56_linux_amd64.tar.gz",
+        "url": "https://github.com/router-for-me/CLIProxyAPI/releases/download/v8.0.76/CLIProxyAPI_8.0.76_linux_amd64.tar.gz",
         "compression": "tar.gz",
         "executable": "cli-proxy-api",
-        "archiveSha256": "6f313dfdfbb62154de97a446cfc47d5a3419723484ea9f3bc1fb0a3015d195e7",
-        "archiveBytes": 25263955,
-        "sha256": "0aa3798effa9a387feba232ef5306d159b0b7312a4a70abd794a7ba6e1e5c079"
+        "archiveSha256": "3cdd1218e8e7566613d98f393e4d9f5fd96043dc0f1cc568358646d3dd9eefd0",
+        "archiveBytes": 26360324,
+        "sha256": "120fe02acee5e338b634057ea420088d17748b2461a23dd2ab77c7bc84ae17ea"
       },
       "linux-arm64": {
-        "url": "https://github.com/router-for-me/CLIProxyAPI/releases/download/v8.0.56/CLIProxyAPI_8.0.56_linux_aarch64.tar.gz",
+        "url": "https://github.com/router-for-me/CLIProxyAPI/releases/download/v8.0.76/CLIProxyAPI_8.0.76_linux_aarch64.tar.gz",
         "compression": "tar.gz",
         "executable": "cli-proxy-api",
-        "archiveSha256": "1bbe291232849f1707630d817d70c994cd1e9da40c070035b52d113683557f68",
-        "archiveBytes": 22766858,
-        "sha256": "a953a71f094676e1df8289e5cc86c5d77578c794754b517544d6c5cbde1069a5"
+        "archiveSha256": "b76657bbcb2a1f6de32b11f69def2a2d03961391b378e0ca2b25378401390a44",
+        "archiveBytes": 23739512,
+        "sha256": "6b8c3b98f5d7ab87bd9d77c56105a9e8eb7cf27df522d2a6fb8455b8398dbe86"
       },
       "darwin-x64": {
-        "url": "https://github.com/router-for-me/CLIProxyAPI/releases/download/v8.0.56/CLIProxyAPI_8.0.56_darwin_amd64.tar.gz",
+        "url": "https://github.com/router-for-me/CLIProxyAPI/releases/download/v8.0.76/CLIProxyAPI_8.0.76_darwin_amd64.tar.gz",
         "compression": "tar.gz",
         "executable": "cli-proxy-api",
-        "archiveSha256": "68a40da80b87c8e4d4e66453e04a44183767ea593e1070661ed92e3855558b51",
-        "archiveBytes": 25217133,
-        "sha256": "69a0625c41708c9a6cdeda0750e0e3fafdc13e89b791e0da9ae08ee6f66dda51"
+        "archiveSha256": "3cf94f4c345995c8359c5421ec5c448087cb70402ab7aa5db837c6233d6df710",
+        "archiveBytes": 26312005,
+        "sha256": "c2915c67dded5bd2016bb2cd3df2f3189c628f865e7869a474215a48b86353d7"
       },
       "darwin-arm64": {
-        "url": "https://github.com/router-for-me/CLIProxyAPI/releases/download/v8.0.56/CLIProxyAPI_8.0.56_darwin_aarch64.tar.gz",
+        "url": "https://github.com/router-for-me/CLIProxyAPI/releases/download/v8.0.76/CLIProxyAPI_8.0.76_darwin_aarch64.tar.gz",
         "compression": "tar.gz",
         "executable": "cli-proxy-api",
-        "archiveSha256": "356bb4c64d3ef0238192481be1d0efde6d495bba74bdefe60badbc5dce698799",
-        "archiveBytes": 23272204,
-        "sha256": "12dfcec8bc6a2e4ce959dfff1030e8c322e4222cb2be0cb17a51da34f4760dd7"
+        "archiveSha256": "69acf0b768a62eb13ba19c4fbfa8fece20e7cdcaa8bfaa1f73d45ff2c2754ce7",
+        "archiveBytes": 24276422,
+        "sha256": "6f4e576ce45d5ab8a1a2203bd5914a453e2cd50ff87445ced8986f8a3eb21aad"
       },
       "win32-x64": {
-        "url": "https://github.com/router-for-me/CLIProxyAPI/releases/download/v8.0.56/CLIProxyAPI_8.0.56_windows_amd64.zip",
+        "url": "https://github.com/router-for-me/CLIProxyAPI/releases/download/v8.0.76/CLIProxyAPI_8.0.76_windows_amd64.zip",
         "compression": "zip",
         "executable": "cli-proxy-api.exe",
-        "archiveSha256": "2a6f081fbafacfe1f1c05e1960612011ccc8bacd9b74a6ac7104b65c03b1bb5f",
-        "archiveBytes": 25540036,
-        "sha256": "5058ad7f5623febfe91d255d044a1d4efe24b19ce09c653e2852755007c4328e"
+        "archiveSha256": "926a83090a7813dfb1daf4c34bba94febe406820d15446fe76ff150c2c35b1c5",
+        "archiveBytes": 26641359,
+        "sha256": "5814bb18113d8fa0198016b602b35f559b34f50c80f5da3e9b6e0664ac109419"
       }
     }
   },
@@ -57,9 +57,9 @@
       "displayName": "Claude Opus 5"
     },
     "fable": {
-      "upstream": "claude-fable-5-1",
-      "alias": "claude-fable-5-1",
-      "displayName": "Claude Fable 5.1"
+      "upstream": "claude-fable-5-2",
+      "alias": "claude-fable-5-2",
+      "displayName": "Claude Fable 5.2"
     },
     "opus55": {
       "upstream": "claude-opus-5-5",
@@ -88,7 +88,8 @@
         "2.1.280",
         "2.1.289",
         "2.1.299",
-        "2.1.300"
+        "2.1.300",
+        "2.1.326"
       ],
       "requiredCapabilities": [
         "--append-system-prompt"

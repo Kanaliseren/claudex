@@ -24,7 +24,7 @@ claudex run fable
 ```
 
 Complete the browser login using your own Claude account. Every model, including
-**Haiku**, **Sonnet**, **Opus 5**, and **Fable 5.1**, uses its native Claude route.
+**Haiku**, **Sonnet**, **Opus 5**, and **Fable 5.2**, uses its native Claude route.
 Run `claudex login codex` to add a Codex account as well.
 
 For T3 Code, run `claudex integrate t3`, then restart T3 Code.

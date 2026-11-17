@@ -17,8 +17,9 @@ const legacyModelOverrides = new Set([
   "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE",
 ]);
 
-// Former GPT routes, mapped to the native Claude model that replaced each selector.
+// Retired selectors, mapped to the native Claude model that replaced each one.
 const retiredModels = new Map([
+  ["claude-fable-5-1", "claude-fable-5-2"],
   ["gpt-6.1-sol", "claude-sonnet-5-5"],
   ["gpt-6-astra", "claude-sonnet-5-5"],
   ["gpt-6-sol", "claude-haiku-4-5-20251001"],

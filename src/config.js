@@ -1,5 +1,5 @@
 import { readFile, readdir } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
 import { platformKey } from "./paths.js";
 import { atomicWrite, ensureDir, exists, randomSecret, sha256File } from "./util.js";
 
@@ -27,12 +27,14 @@ export async function tapVerified(paths, manifest) {
 
 // The proxy loads every library under its plugin directory in-process, next
 // to the OAuth tokens, so only the reviewed tap build pinned in the channel
-// may be there.
+// may be there. The proxy keeps its own copies of loaded plugins in `.shadow/`
+// and never loads from there, so that cache is not a second library.
 export async function verifyTap(paths, manifest) {
   const expected = manifest.plugins?.["claudex-tap"]?.assets?.[platformKey()]?.sha256;
   if (!expected) throw new Error(`no reviewed claudex-tap build is pinned for ${platformKey()}`);
   const libraries = (await exists(paths.pluginsDir))
-    ? (await readdir(paths.pluginsDir, { recursive: true })).filter((name) => /\.(so|dylib|dll)$/i.test(name))
+    ? (await readdir(paths.pluginsDir, { recursive: true }))
+      .filter((name) => /\.(so|dylib|dll)$/i.test(name) && name.split(sep)[0] !== ".shadow")
     : [];
   if (libraries.length !== 1 || libraries[0] !== "claudex-tap.so") {
     throw new Error(`${paths.pluginsDir} must hold only claudex-tap.so (build it with deploy/clickhouse/build-plugin.sh); found: ${libraries.join(", ") || "nothing"}`);

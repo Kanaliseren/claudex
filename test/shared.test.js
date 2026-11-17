@@ -30,7 +30,7 @@ test("shared clients use existing accounts and T3 aliases without owning the pro
   assert.doesNotMatch(await readFile(paths.wrapper, "utf8"), /SONNET/);
   const config = JSON.parse(await readFile(settings, "utf8"));
   const env = Object.fromEntries(config.providerInstances.claudeAgent.environment.map(({ name, value }) => [name, value]));
-  assert.deepEqual(config.providerInstances.claudeAgent.config.customModels, ["claude-opus-5", "claude-fable-5-1"]);
+  assert.deepEqual(config.providerInstances.claudeAgent.config.customModels, ["claude-opus-5", "claude-fable-5-2"]);
   assert.equal(config.usageLimitSources.claudex.managementKey, "test-admin");
   for (const action of [() => setup(paths, manifest), () => upgrade(paths, manifest), () => rollback(paths), () => login(paths), () => configure(paths, manifest)]) {
     await assert.rejects(action(), /shared proxy/);

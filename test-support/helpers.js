@@ -14,7 +14,7 @@ export function fixtureManifest() {
     proxy: { version: "v-test", upstreamVersion: "v-test", commit: "abc", repository: "example/repo", tag: "v-test", assets: {} },
     models: {
       opus: { upstream: "claude-opus-5", alias: "claude-opus-5", displayName: "Opus" },
-      fable: { upstream: "claude-fable-5-1", alias: "claude-fable-5-1", displayName: "Fable" },
+      fable: { upstream: "claude-fable-5-2", alias: "claude-fable-5-2", displayName: "Fable" },
     },
     compatibility: {
       claudeCode: {

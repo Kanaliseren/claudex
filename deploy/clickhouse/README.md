@@ -114,7 +114,10 @@ GROUP BY h ORDER BY first_seen;
 
 `tool_versions` counts a call when the model emitted it in a request that
 offered that version; results are deduplicated per call. Server tools such
-as `web_search` count `server_tool_use` calls.
+as `web_search` count `server_tool_use` calls, but not their errors: the
+extractor does not read the nested error a failed web search returns.
+Requests whose raw body was already gone are skipped (rows written before
+that rule have status `no_body`).
 
 ## Disk use and retention
 

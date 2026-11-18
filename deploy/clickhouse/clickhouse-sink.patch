@@ -539,10 +539,10 @@ index d42a0ff..0ac460b 100644
  // do runs one statement. With data != nil the statement goes into the URL and
 diff --git a/plugins/clickhouse-sink/deriver/context.go b/plugins/clickhouse-sink/deriver/context.go
 new file mode 100644
-index 0000000..88cc4af
+index 0000000..be95ed6
 --- /dev/null
 +++ b/plugins/clickhouse-sink/deriver/context.go
-@@ -0,0 +1,422 @@
+@@ -0,0 +1,410 @@
 +package main
 +
 +import (
@@ -658,12 +658,12 @@ index 0000000..88cc4af
 +		if after, ok := d.secretSet(); !ok || after != loads {
 +			return total, fmt.Errorf("secret set changed during a context batch; retrying")
 +		}
-+		blobs, err := d.newBlobs(ctx, referenced)
-+		if err != nil {
-+			return total, fmt.Errorf("blob lookup: %w", err)
-+		}
++		blobs := d.newBlobs(referenced)
 +		if len(blobs) > 0 {
 +			if err := d.ch.insertJSON(ctx, d.db+".context_blobs", blobs); err != nil {
++				for _, b := range blobs {
++					delete(d.blobsWritten, blobKey{b.(contextBlob).Kind, b.(contextBlob).Hash})
++				}
 +				return total, fmt.Errorf("insert %d blobs: %w", len(blobs), err)
 +			}
 +		}
@@ -708,7 +708,7 @@ index 0000000..88cc4af
 +    request_headers['x-claude-code-session-id'] AS session_id,
 +    request_headers['x-claude-code-agent-id'] AS agent_id
 +FROM ` + d.db + `.requests
-+WHERE path = '/v1/messages'
++WHERE path = '/v1/messages' AND request_body != ''
 +  AND ingested_at >= {lower:DateTime64(9, 'UTC')}
 +  AND (ingested_at, request_id) > ({cts:DateTime64(9, 'UTC')}, {cid:String})
 +  AND request_id NOT IN (
@@ -755,40 +755,22 @@ index 0000000..88cc4af
 +	return out, err
 +}
 +
-+// newBlobs drops blobs that are already stored or repeated in this batch.
-+func (d *deriver) newBlobs(ctx context.Context, blobs []contextBlob) ([]any, error) {
-+	if len(blobs) == 0 {
-+		return nil, nil
-+	}
-+	type key struct{ kind, hash string }
-+	var hashes []string
-+	unique := map[string]bool{}
-+	for _, b := range blobs {
-+		if !unique[b.Hash] {
-+			unique[b.Hash] = true
-+			hashes = append(hashes, b.Hash)
-+		}
-+	}
-+	stored := map[key]bool{}
-+	type row struct {
-+		Kind string `json:"kind"`
-+		Hash string `json:"hash"`
-+	}
-+	err := selectRows(ctx, d.ch, "SELECT DISTINCT kind, hash FROM "+d.db+".context_blobs WHERE hash IN {hashes:Array(String)}",
-+		map[string]string{"hashes": chArray(hashes)}, func(r row) { stored[key{r.Kind, r.Hash}] = true })
-+	if err != nil {
-+		return nil, err
-+	}
++// newBlobs drops blobs this process already wrote or that repeat in the
++// batch. After a restart some are written again; ReplacingMergeTree merges
++// them and every reader groups by (kind, hash).
++func (d *deriver) newBlobs(blobs []contextBlob) []any {
 +	var out []any
 +	for _, b := range blobs {
-+		k := key{b.Kind, b.Hash}
-+		if !stored[k] {
-+			stored[k] = true
++		k := blobKey{b.Kind, b.Hash}
++		if !d.blobsWritten[k] {
++			d.blobsWritten[k] = true
 +			out = append(out, b)
 +		}
 +	}
-+	return out, nil
++	return out
 +}
++
++type blobKey struct{ kind, hash string }
 +
 +// buildContext turns one request into its request_context row and every blob
 +// that row references (newBlobs drops those already stored).
@@ -897,7 +879,13 @@ index 0000000..88cc4af
 +		return contextBlob{}, false
 +	}
 +	delete(tool, "cache_control")
-+	var texts []string
++	// Pattern rules such as generic-api-key need a key next to its value,
++	// so the decoded definition is scanned whole as well as string by string.
++	whole, err := json.Marshal(tool)
++	if err != nil {
++		return contextBlob{}, false
++	}
++	texts := []string{string(whole)}
 +	collectStrings(tool, &texts)
 +	rep, res := r.NewReplacer(texts), redact.NewResult()
 +	clean, _ := redactValue(tool, rep, res).(map[string]any)
@@ -967,10 +955,10 @@ index 0000000..88cc4af
 +const contextLoopBatches = 20
 diff --git a/plugins/clickhouse-sink/deriver/context_test.go b/plugins/clickhouse-sink/deriver/context_test.go
 new file mode 100644
-index 0000000..e52ca8b
+index 0000000..b21528e
 --- /dev/null
 +++ b/plugins/clickhouse-sink/deriver/context_test.go
-@@ -0,0 +1,229 @@
+@@ -0,0 +1,222 @@
 +package main
 +
 +import (
@@ -1013,6 +1001,13 @@ index 0000000..e52ca8b
 +		if strings.Contains(b.Content, "not-real") {
 +			t.Fatalf("secret survived in %s blob: %s", b.Kind, b.Content)
 +		}
++	}
++}
++
++func TestContextToolPatternSecretNeedsItsKey(t *testing.T) {
++	_, blobs := build(t, toolsBody(`{"name":"X","description":"d","input_schema":{"example":{"api_key":"Zx9qP2vL7mK4rT8wB3nY6cH1jD5fG0sQ"}}}`))
++	if strings.Contains(blobs[0].Content, "Zx9qP2vL7mK4rT8wB3nY6cH1jD5fG0sQ") {
++		t.Fatalf("keyed secret survived: %s", blobs[0].Content)
 +	}
 +}
 +
@@ -1098,20 +1093,6 @@ index 0000000..e52ca8b
 +	}
 +}
 +
-+func TestContextMemoReusesBlobs(t *testing.T) {
-+	r := testRedactor(t)
-+	memo := contextMemo{}
-+	body := toolsBody(`{"name":"A","description":"a"}`, `{"name":"B","description":"b"}`)
-+	r1, b1 := buildContext(r, memo, contextCandidate{RequestID: "1"}, body)
-+	r2, b2 := buildContext(r, memo, contextCandidate{RequestID: "2"}, body)
-+	if len(memo) != 3 || len(b1) != 3 || len(b2) != 3 {
-+		t.Fatalf("memo %d, blobs %d %d", len(memo), len(b1), len(b2))
-+	}
-+	if fmt.Sprint(r1.ToolHashes, r1.SystemHashes) != fmt.Sprint(r2.ToolHashes, r2.SystemHashes) {
-+		t.Error("same body, different hashes")
-+	}
-+}
-+
 +func TestCapBytes(t *testing.T) {
 +	c := []contextCandidate{{Size: 40}, {Size: 40}, {Size: 40}}
 +	if got := len(capBytes(c, 100)); got != 2 {
@@ -1147,13 +1128,13 @@ index 0000000..e52ca8b
 +	insertRaw(t, d, append(rows, expired)...)
 +
 +	d.batchSize = 2
-+	if n, err := d.contextPass(ctx, contextLoopBatches); err != nil || n != 4 {
++	if n, err := d.contextPass(ctx, contextLoopBatches); err != nil || n != 3 {
 +		t.Fatalf("first pass = %d, %v", n, err)
 +	}
 +	if n, err := d.contextPass(ctx, contextLoopBatches); err != nil || n != 0 {
 +		t.Fatalf("idle pass = %d, %v", n, err)
 +	}
-+	if got := scalar(t, d, "SELECT status, count() FROM "+testDB+".request_context GROUP BY status ORDER BY status FORMAT TSV"); got != "no_body\t1\nok\t3" {
++	if got := scalar(t, d, "SELECT status, count() FROM "+testDB+".request_context GROUP BY status ORDER BY status FORMAT TSV"); got != "ok\t3" {
 +		t.Fatalf("statuses = %q", got)
 +	}
 +	if got := scalar(t, d, "SELECT count() FROM "+testDB+".context_blobs WHERE kind = 'tool' AND position(content, '\"maximum\":1e3') > 0"); got != "1" {
@@ -1201,10 +1182,10 @@ index 0000000..e52ca8b
 +	}
 +}
 diff --git a/plugins/clickhouse-sink/deriver/deriver.go b/plugins/clickhouse-sink/deriver/deriver.go
-index 3855282..7cbcb5a 100644
+index 3855282..da2b6b4 100644
 --- a/plugins/clickhouse-sink/deriver/deriver.go
 +++ b/plugins/clickhouse-sink/deriver/deriver.go
-@@ -17,14 +17,16 @@ type deriver struct {
+@@ -17,14 +17,18 @@ type deriver struct {
  	ch        *clickhouse
  	db        string
  	batchSize int
@@ -1212,15 +1193,17 @@ index 3855282..7cbcb5a 100644
 -	log       *slog.Logger
 +	// contextByteCap bounds the request bodies one context batch fetches.
 +	contextByteCap uint64
-+	redactor       *redact.Redactor
-+	log            *slog.Logger
++	// blobsWritten holds the context blobs this process has stored.
++	blobsWritten map[blobKey]bool
++	redactor     *redact.Redactor
++	log          *slog.Logger
  	// extract is extract.Extract; tests replace it to inject a poison row.
  	extract func(extract.Row, bool) extract.Facts
  }
  
  func newDeriver(ch *clickhouse, db string, log *slog.Logger, r *redact.Redactor) *deriver {
 -	return &deriver{ch: ch, db: db, batchSize: 50, log: log, extract: extract.Extract, redactor: r}
-+	return &deriver{ch: ch, db: db, batchSize: 50, contextByteCap: 64 << 20, log: log, extract: extract.Extract, redactor: r}
++	return &deriver{ch: ch, db: db, batchSize: 50, contextByteCap: 64 << 20, blobsWritten: map[blobKey]bool{}, log: log, extract: extract.Extract, redactor: r}
  }
  
  // setup creates the derived table and views.

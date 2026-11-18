@@ -537,6 +537,804 @@ index d42a0ff..0ac460b 100644
  }
  
  // do runs one statement. With data != nil the statement goes into the URL and
+diff --git a/plugins/clickhouse-sink/deriver/context.go b/plugins/clickhouse-sink/deriver/context.go
+new file mode 100644
+index 0000000..88cc4af
+--- /dev/null
++++ b/plugins/clickhouse-sink/deriver/context.go
+@@ -0,0 +1,422 @@
++package main
++
++import (
++	"bytes"
++	"context"
++	"crypto/sha256"
++	"encoding/hex"
++	"encoding/json"
++	"fmt"
++	"strings"
++
++	"github.com/api-token/Cli-Proxy-API-Management-Center/plugins/clickhouse-sink/redact"
++)
++
++// The context ledger keeps what Claude Code sent besides the conversation:
++// every distinct tool definition and system prompt block, once, forever, and
++// per request the ordered hashes it offered. Raw bodies expire after a few
++// days; this is what lets a tool description or prompt edit be compared with
++// how the model used it later.
++
++const (
++	contextStatusOK              = "ok"
++	contextStatusNoBody          = "no_body"
++	contextStatusUnparseable     = "unparseable"
++	contextStatusRedactionFailed = "redaction_failed"
++
++	kindTool    = "tool"
++	kindSystem  = "system"
++	kindBilling = "billing"
++
++	// billingPrefix starts Claude Code's per-request billing system block,
++	// which changes on every request and is not part of the prompt.
++	billingPrefix = "x-anthropic-billing-header:"
++)
++
++// contextBlob is one row of context_blobs.
++type contextBlob struct {
++	Hash    string `json:"hash"`
++	Kind    string `json:"kind"`
++	Name    string `json:"name"`
++	Content string `json:"content"`
++}
++
++// contextRow is one row of request_context.
++type contextRow struct {
++	RequestID    string   `json:"request_id"`
++	StartedAt    string   `json:"started_at"`
++	IngestedAt   string   `json:"ingested_at"`
++	SessionID    string   `json:"session_id"`
++	AgentID      string   `json:"agent_id"`
++	ToolHashes   []string `json:"tool_hashes"`
++	SystemHashes []string `json:"system_hashes"`
++	Status       string   `json:"status"`
++}
++
++type contextCandidate struct {
++	RequestID  string `json:"request_id"`
++	StartedAt  string `json:"started_at"`
++	IngestedAt string `json:"ingested_at"`
++	Size       uint64 `json:"size"`
++	SessionID  string `json:"session_id"`
++	AgentID    string `json:"agent_id"`
++}
++
++// contextMemo maps the raw bytes of an item to its stored blob, so one pass
++// redacts each distinct definition once even though every request repeats it.
++type contextMemo map[[sha256.Size]byte]contextBlob
++
++// contextPass fills request_context for every /v1/messages row that has none
++// yet, at most maxBatches batches per call so the facts pass is never
++// starved. Like pass, it never moves past rows it failed to store.
++func (d *deriver) contextPass(ctx context.Context, maxBatches int) (int, error) {
++	lower, err := d.contextWatermark(ctx)
++	if err != nil {
++		return 0, fmt.Errorf("context watermark: %w", err)
++	}
++	var memo contextMemo
++	var memoLoads uint64
++	cursorTS, cursorID := lower, ""
++	total := 0
++	for i := 0; i < maxBatches; i++ {
++		// Every blob in a batch is redacted against one complete secret set:
++		// checked here, and again before anything is written.
++		loads, ok := d.secretSet()
++		if !ok {
++			return total, fmt.Errorf("secret sources unreadable, context pass skipped")
++		}
++		if memo == nil || loads != memoLoads {
++			memo, memoLoads = contextMemo{}, loads
++		}
++		cands, err := d.contextCandidates(ctx, lower, cursorTS, cursorID)
++		if err != nil {
++			return total, fmt.Errorf("context candidates: %w", err)
++		}
++		if len(cands) == 0 {
++			break
++		}
++		cands = capBytes(cands, d.contextByteCap)
++		bodies, err := d.contextBodies(ctx, lower, cands)
++		if err != nil {
++			return total, fmt.Errorf("context bodies: %w", err)
++		}
++		rows := make([]any, 0, len(cands))
++		var referenced []contextBlob
++		for _, c := range cands {
++			row, blobs := buildContext(d.redactor, memo, c, bodies[c.RequestID])
++			rows = append(rows, row)
++			referenced = append(referenced, blobs...)
++		}
++		// The set reloaded or failed mid-batch, so some blobs may have been
++		// redacted against a different or incomplete set: drop the batch and
++		// retry it next loop.
++		if after, ok := d.secretSet(); !ok || after != loads {
++			return total, fmt.Errorf("secret set changed during a context batch; retrying")
++		}
++		blobs, err := d.newBlobs(ctx, referenced)
++		if err != nil {
++			return total, fmt.Errorf("blob lookup: %w", err)
++		}
++		if len(blobs) > 0 {
++			if err := d.ch.insertJSON(ctx, d.db+".context_blobs", blobs); err != nil {
++				return total, fmt.Errorf("insert %d blobs: %w", len(blobs), err)
++			}
++		}
++		if err := d.ch.insertJSON(ctx, d.db+".request_context", rows); err != nil {
++			return total, fmt.Errorf("insert %d context rows (first request_id %s): %w", len(rows), cands[0].RequestID, err)
++		}
++		total += len(cands)
++		last := cands[len(cands)-1]
++		cursorTS, cursorID = last.IngestedAt, last.RequestID
++	}
++	return total, nil
++}
++
++// secretSet reports the redactor's current load and whether it is complete.
++func (d *deriver) secretSet() (uint64, bool) {
++	if len(d.redactor.Failed()) > 0 {
++		return 0, false
++	}
++	return d.redactor.Loads(), true
++}
++
++func (d *deriver) contextWatermark(ctx context.Context) (string, error) {
++	type wm struct {
++		Lower string `json:"lower"`
++		Rows  uint64 `json:"rows"`
++	}
++	var got wm
++	err := selectRows(ctx, d.ch, "SELECT max(ingested_at) - INTERVAL 1 HOUR AS lower, count() AS rows FROM "+d.db+".request_context", nil,
++		func(r wm) { got = r })
++	if err != nil {
++		return "", err
++	}
++	if got.Rows == 0 {
++		return epoch, nil
++	}
++	return got.Lower, nil
++}
++
++// contextCandidates lists the next rows without fetching their bodies.
++func (d *deriver) contextCandidates(ctx context.Context, lower, cursorTS, cursorID string) ([]contextCandidate, error) {
++	q := `SELECT request_id, started_at, ingested_at, length(request_body) AS size,
++    request_headers['x-claude-code-session-id'] AS session_id,
++    request_headers['x-claude-code-agent-id'] AS agent_id
++FROM ` + d.db + `.requests
++WHERE path = '/v1/messages'
++  AND ingested_at >= {lower:DateTime64(9, 'UTC')}
++  AND (ingested_at, request_id) > ({cts:DateTime64(9, 'UTC')}, {cid:String})
++  AND request_id NOT IN (
++      SELECT request_id FROM ` + d.db + `.request_context WHERE ingested_at >= {lower:DateTime64(9, 'UTC')})
++ORDER BY ingested_at, request_id
++LIMIT {limit:UInt32}`
++	params := map[string]string{"lower": lower, "cts": cursorTS, "cid": cursorID, "limit": fmt.Sprint(d.batchSize)}
++	var out []contextCandidate
++	err := selectRows(ctx, d.ch, q, params, func(c contextCandidate) { out = append(out, c) })
++	return out, err
++}
++
++// capBytes keeps the longest prefix whose bodies fit in limit, and always at
++// least one row so a single huge body still makes progress.
++func capBytes(cands []contextCandidate, limit uint64) []contextCandidate {
++	var sum uint64
++	for i, c := range cands {
++		sum += c.Size
++		if i > 0 && sum > limit {
++			return cands[:i]
++		}
++	}
++	return cands
++}
++
++// contextBodies fetches whole bodies: ClickHouse's JSON functions rewrite
++// numbers (1e3 → 1000), so tools and system are decoded here, byte for byte.
++func (d *deriver) contextBodies(ctx context.Context, lower string, cands []contextCandidate) (map[string]string, error) {
++	ids := make([]string, len(cands))
++	for i, c := range cands {
++		ids[i] = c.RequestID
++	}
++	type body struct {
++		RequestID string `json:"request_id"`
++		Body      string `json:"request_body"`
++	}
++	out := make(map[string]string, len(cands))
++	err := selectRows(ctx, d.ch, "SELECT request_id, request_body FROM "+d.db+".requests WHERE ingested_at >= {lower:DateTime64(9, 'UTC')} AND request_id IN {ids:Array(String)}",
++		map[string]string{"lower": lower, "ids": chArray(ids)}, func(b body) {
++			if len(b.Body) > len(out[b.RequestID]) {
++				out[b.RequestID] = b.Body
++			}
++		})
++	return out, err
++}
++
++// newBlobs drops blobs that are already stored or repeated in this batch.
++func (d *deriver) newBlobs(ctx context.Context, blobs []contextBlob) ([]any, error) {
++	if len(blobs) == 0 {
++		return nil, nil
++	}
++	type key struct{ kind, hash string }
++	var hashes []string
++	unique := map[string]bool{}
++	for _, b := range blobs {
++		if !unique[b.Hash] {
++			unique[b.Hash] = true
++			hashes = append(hashes, b.Hash)
++		}
++	}
++	stored := map[key]bool{}
++	type row struct {
++		Kind string `json:"kind"`
++		Hash string `json:"hash"`
++	}
++	err := selectRows(ctx, d.ch, "SELECT DISTINCT kind, hash FROM "+d.db+".context_blobs WHERE hash IN {hashes:Array(String)}",
++		map[string]string{"hashes": chArray(hashes)}, func(r row) { stored[key{r.Kind, r.Hash}] = true })
++	if err != nil {
++		return nil, err
++	}
++	var out []any
++	for _, b := range blobs {
++		k := key{b.Kind, b.Hash}
++		if !stored[k] {
++			stored[k] = true
++			out = append(out, b)
++		}
++	}
++	return out, nil
++}
++
++// buildContext turns one request into its request_context row and every blob
++// that row references (newBlobs drops those already stored).
++func buildContext(r *redact.Redactor, memo contextMemo, c contextCandidate, body string) (row contextRow, blobs []contextBlob) {
++	row = contextRow{
++		RequestID: c.RequestID, StartedAt: orEpoch(c.StartedAt), IngestedAt: orEpoch(c.IngestedAt),
++		SessionID: c.SessionID, AgentID: c.AgentID, ToolHashes: []string{}, SystemHashes: []string{},
++		Status: contextStatusOK,
++	}
++	fail := func(status string) (contextRow, []contextBlob) {
++		row.ToolHashes, row.SystemHashes, row.Status = []string{}, []string{}, status
++		return row, nil
++	}
++	if body == "" {
++		return fail(contextStatusNoBody)
++	}
++	defer func() {
++		if recover() != nil {
++			row, blobs = fail(contextStatusRedactionFailed)
++		}
++	}()
++	tools, system, ok := splitBody(body)
++	if !ok {
++		return fail(contextStatusUnparseable)
++	}
++	add := func(kind string, raw []byte, build func() (contextBlob, bool)) bool {
++		key := sha256.Sum256(append([]byte(kind+"\x00"), raw...))
++		b, seen := memo[key]
++		if !seen {
++			if b, ok = build(); !ok {
++				return false
++			}
++			memo[key] = b
++		}
++		blobs = append(blobs, b)
++		return true
++	}
++	for _, t := range tools {
++		if !add(kindTool, t, func() (contextBlob, bool) { return toolBlob(r, t) }) {
++			return fail(contextStatusUnparseable)
++		}
++		row.ToolHashes = append(row.ToolHashes, blobs[len(blobs)-1].Hash)
++	}
++	for _, text := range system {
++		kind := kindSystem
++		if strings.HasPrefix(text, billingPrefix) {
++			kind = kindBilling
++		}
++		add(kind, []byte(text), func() (contextBlob, bool) { return textBlob(r, kind, text), true })
++		row.SystemHashes = append(row.SystemHashes, blobs[len(blobs)-1].Hash)
++	}
++	return row, blobs
++}
++
++// splitBody returns the raw tool definitions and the system texts. Absent
++// fields are fine; anything that is not the documented shape is not.
++func splitBody(body string) (tools []json.RawMessage, system []string, ok bool) {
++	var top struct {
++		Tools  json.RawMessage `json:"tools"`
++		System json.RawMessage `json:"system"`
++	}
++	if err := json.Unmarshal([]byte(body), &top); err != nil {
++		return nil, nil, false
++	}
++	if len(top.Tools) > 0 && string(top.Tools) != "null" {
++		if err := json.Unmarshal(top.Tools, &tools); err != nil {
++			return nil, nil, false
++		}
++	}
++	if len(top.System) == 0 || string(top.System) == "null" {
++		return tools, nil, true
++	}
++	var s string
++	if json.Unmarshal(top.System, &s) == nil {
++		if s == "" {
++			return tools, nil, true
++		}
++		return tools, []string{s}, true
++	}
++	var blocks []struct {
++		Text *string `json:"text"`
++	}
++	if err := json.Unmarshal(top.System, &blocks); err != nil {
++		return nil, nil, false
++	}
++	for _, b := range blocks {
++		if b.Text != nil && *b.Text != "" {
++			system = append(system, *b.Text)
++		}
++	}
++	return tools, system, true
++}
++
++// toolBlob redacts every decoded key and string of one tool definition, then
++// stores it as canonical JSON (sorted keys, numbers as sent) without
++// cache_control, which only moves the prompt-cache breakpoint.
++func toolBlob(r *redact.Redactor, raw json.RawMessage) (contextBlob, bool) {
++	dec := json.NewDecoder(bytes.NewReader(raw))
++	dec.UseNumber()
++	var v any
++	if err := dec.Decode(&v); err != nil {
++		return contextBlob{}, false
++	}
++	tool, ok := v.(map[string]any)
++	if !ok {
++		return contextBlob{}, false
++	}
++	delete(tool, "cache_control")
++	var texts []string
++	collectStrings(tool, &texts)
++	rep, res := r.NewReplacer(texts), redact.NewResult()
++	clean, _ := redactValue(tool, rep, res).(map[string]any)
++	var buf bytes.Buffer
++	enc := json.NewEncoder(&buf)
++	enc.SetEscapeHTML(false)
++	if err := enc.Encode(clean); err != nil {
++		return contextBlob{}, false
++	}
++	content := strings.TrimSuffix(buf.String(), "\n")
++	name, _ := clean["name"].(string)
++	if name == "" {
++		name, _ = clean["type"].(string)
++	}
++	return contextBlob{Hash: sha256Hex(content), Kind: kindTool, Name: name, Content: content}, true
++}
++
++func textBlob(r *redact.Redactor, kind, text string) contextBlob {
++	clean := r.NewReplacer([]string{text}).Apply(text, redact.NewResult())
++	return contextBlob{Hash: sha256Hex(clean), Kind: kind, Content: clean}
++}
++
++func collectStrings(v any, out *[]string) {
++	switch t := v.(type) {
++	case map[string]any:
++		for k, x := range t {
++			*out = append(*out, k)
++			collectStrings(x, out)
++		}
++	case []any:
++		for _, x := range t {
++			collectStrings(x, out)
++		}
++	case string:
++		*out = append(*out, t)
++	}
++}
++
++func redactValue(v any, rep *redact.Replacer, res *redact.Result) any {
++	switch t := v.(type) {
++	case map[string]any:
++		out := make(map[string]any, len(t))
++		for k, x := range t {
++			out[rep.Apply(k, res)] = redactValue(x, rep, res)
++		}
++		return out
++	case []any:
++		out := make([]any, len(t))
++		for i, x := range t {
++			out[i] = redactValue(x, rep, res)
++		}
++		return out
++	case string:
++		return rep.Apply(t, res)
++	default:
++		return v
++	}
++}
++
++func sha256Hex(s string) string {
++	sum := sha256.Sum256([]byte(s))
++	return hex.EncodeToString(sum[:])
++}
++
++// contextLoopBatches bounds one context pass; the backfill of a full raw
++// window (~6k requests) finishes within a few loops.
++const contextLoopBatches = 20
+diff --git a/plugins/clickhouse-sink/deriver/context_test.go b/plugins/clickhouse-sink/deriver/context_test.go
+new file mode 100644
+index 0000000..e52ca8b
+--- /dev/null
++++ b/plugins/clickhouse-sink/deriver/context_test.go
+@@ -0,0 +1,229 @@
++package main
++
++import (
++	"context"
++	"encoding/json"
++	"fmt"
++	"os"
++	"path/filepath"
++	"strings"
++	"testing"
++	"time"
++)
++
++const canarySecret = `canary"secret&not-real-0123456789`
++
++func build(t *testing.T, body string) (contextRow, []contextBlob) {
++	t.Helper()
++	list := filepath.Join(t.TempDir(), "secrets.txt")
++	if err := os.WriteFile(list, []byte(canarySecret+"\n"), 0o600); err != nil {
++		t.Fatal(err)
++	}
++	return buildContext(testRedactor(t, list), contextMemo{}, contextCandidate{RequestID: "r1"}, body)
++}
++
++func toolsBody(tools ...string) string {
++	return `{"model":"m","system":[{"type":"text","text":"You are Claude Code."}],"tools":[` + strings.Join(tools, ",") + `],"messages":[]}`
++}
++
++func TestContextToolSecretIsRedactedAfterDecoding(t *testing.T) {
++	// JSON-escaped in the body: " is the quote, & the ampersand.
++	escaped := strings.NewReplacer(`"`, `\u0022`, `&`, `\u0026`).Replace(canarySecret)
++	row, blobs := build(t, toolsBody(`{"name":"Bash","description":"key `+escaped+`","input_schema":{"type":"object"}}`))
++	if row.Status != contextStatusOK || len(row.ToolHashes) != 1 {
++		t.Fatalf("row = %+v", row)
++	}
++	for _, b := range blobs {
++		if strings.Contains(b.Content, "canary") && !strings.Contains(b.Content, "[REDACTED:") {
++			t.Fatalf("secret survived in %s blob: %s", b.Kind, b.Content)
++		}
++		if strings.Contains(b.Content, "not-real") {
++			t.Fatalf("secret survived in %s blob: %s", b.Kind, b.Content)
++		}
++	}
++}
++
++func TestContextToolHashing(t *testing.T) {
++	hash := func(tool string) (string, contextBlob) {
++		t.Helper()
++		row, blobs := build(t, toolsBody(tool))
++		if row.Status != contextStatusOK {
++			t.Fatalf("status %s for %s", row.Status, tool)
++		}
++		return row.ToolHashes[0], blobs[0]
++	}
++	base, b := hash(`{"name":"Read","description":"Reads a file.","input_schema":{"type":"object","properties":{"limit":{"type":"integer","maximum":1e3}}}}`)
++	if b.Name != "Read" || b.Kind != kindTool {
++		t.Fatalf("blob = %+v", b)
++	}
++	if !strings.Contains(b.Content, `"maximum":1e3`) {
++		t.Fatalf("number not kept as sent: %s", b.Content)
++	}
++	reordered, _ := hash(`{"input_schema":{"properties":{"limit":{"maximum":1e3,"type":"integer"}},"type":"object"},"description":"Reads a file.","name":"Read"}`)
++	cached, _ := hash(`{"name":"Read","description":"Reads a file.","input_schema":{"type":"object","properties":{"limit":{"type":"integer","maximum":1e3}}},"cache_control":{"type":"ephemeral"}}`)
++	edited, _ := hash(`{"name":"Read","description":"Reads one file.","input_schema":{"type":"object","properties":{"limit":{"type":"integer","maximum":1e3}}}}`)
++	deferred, db := hash(`{"name":"Read","description":"Reads a file.","input_schema":{"type":"object","properties":{"limit":{"type":"integer","maximum":1e3}}},"defer_loading":true}`)
++	if reordered != base || cached != base {
++		t.Error("key order or cache_control changed the hash")
++	}
++	if edited == base || deferred == base {
++		t.Error("description edit or defer_loading kept the hash")
++	}
++	if db.Name != "Read" {
++		t.Errorf("deferred name = %q", db.Name)
++	}
++	_, server := hash(`{"type":"web_search_20250305","name":"web_search","max_uses":8}`)
++	if server.Name != "web_search" {
++		t.Errorf("server tool name = %q", server.Name)
++	}
++	_, unnamed := hash(`{"type":"bash_20250124"}`)
++	if unnamed.Name != "bash_20250124" {
++		t.Errorf("type fallback = %q", unnamed.Name)
++	}
++	big, bb := hash(`{"name":"N","input_schema":{"maximum":123456789012345678901234567890,"x":1.0}}`)
++	if big == "" || !strings.Contains(bb.Content, "123456789012345678901234567890") || !strings.Contains(bb.Content, "1.0") {
++		t.Errorf("large or decimal numbers changed: %s", bb.Content)
++	}
++}
++
++func TestContextSystemBlocks(t *testing.T) {
++	billing := billingPrefix + " cc_version=2.1.327; cch=abc;"
++	withCache := `{"system":[{"type":"text","text":"` + billing + `"},{"type":"text","text":"Prompt.","cache_control":{"type":"ephemeral"}}]}`
++	plain := `{"system":[{"type":"text","text":"Prompt."}]}`
++	str := `{"system":"Prompt."}`
++	r1, blobs := build(t, withCache)
++	r2, _ := build(t, plain)
++	r3, _ := build(t, str)
++	if len(r1.SystemHashes) != 2 || blobs[0].Kind != kindBilling || blobs[1].Kind != kindSystem || blobs[1].Content != "Prompt." {
++		t.Fatalf("row %+v blobs %+v", r1, blobs)
++	}
++	if r1.SystemHashes[1] != r2.SystemHashes[0] || r2.SystemHashes[0] != r3.SystemHashes[0] {
++		t.Error("cache_control or string form changed the system hash")
++	}
++	if len(r1.ToolHashes) != 0 || r1.Status != contextStatusOK {
++		t.Errorf("no tools should be ok with empty hashes: %+v", r1)
++	}
++}
++
++func TestContextStatuses(t *testing.T) {
++	for body, want := range map[string]string{
++		"":                           contextStatusNoBody,
++		"{not json":                  contextStatusUnparseable,
++		`{"tools":{"name":"x"}}`:     contextStatusUnparseable,
++		`{"tools":["x"]}`:            contextStatusUnparseable,
++		`{"system":[1]}`:             contextStatusUnparseable,
++		`{"messages":[]}`:            contextStatusOK,
++		`{"tools":null,"system":""}`: contextStatusOK,
++	} {
++		row, blobs := build(t, body)
++		if row.Status != want {
++			t.Errorf("%q: status %s, want %s", body, row.Status, want)
++		}
++		if want != contextStatusOK && (len(blobs) != 0 || len(row.ToolHashes) != 0) {
++			t.Errorf("%q: failed row kept data", body)
++		}
++	}
++}
++
++func TestContextMemoReusesBlobs(t *testing.T) {
++	r := testRedactor(t)
++	memo := contextMemo{}
++	body := toolsBody(`{"name":"A","description":"a"}`, `{"name":"B","description":"b"}`)
++	r1, b1 := buildContext(r, memo, contextCandidate{RequestID: "1"}, body)
++	r2, b2 := buildContext(r, memo, contextCandidate{RequestID: "2"}, body)
++	if len(memo) != 3 || len(b1) != 3 || len(b2) != 3 {
++		t.Fatalf("memo %d, blobs %d %d", len(memo), len(b1), len(b2))
++	}
++	if fmt.Sprint(r1.ToolHashes, r1.SystemHashes) != fmt.Sprint(r2.ToolHashes, r2.SystemHashes) {
++		t.Error("same body, different hashes")
++	}
++}
++
++func TestCapBytes(t *testing.T) {
++	c := []contextCandidate{{Size: 40}, {Size: 40}, {Size: 40}}
++	if got := len(capBytes(c, 100)); got != 2 {
++		t.Errorf("cap 100 kept %d", got)
++	}
++	if got := len(capBytes(c, 10)); got != 1 {
++		t.Errorf("one oversized row must still pass, kept %d", got)
++	}
++}
++
++// The pass backfills, is idempotent across retries, and tool_versions counts
++// stay right with duplicate blobs, context rows and tool results unmerged.
++func TestContextPassAndToolVersions(t *testing.T) {
++	d := testDeriver(t)
++	ctx := context.Background()
++	base := time.Now().Add(-10 * time.Minute)
++	tool := `{"name":"Bash","description":"Run a command.","input_schema":{"type":"object","properties":{"n":{"type":"number","maximum":1e3}}}}`
++	var rows []rawRow
++	for i := 0; i < 3; i++ {
++		r := fixtureRow(t, "claude_code_stream", fmt.Sprintf("ctx-%d", i), base.Add(time.Duration(i)*time.Second))
++		r.Path = "/v1/messages"
++		var body map[string]any
++		if err := json.Unmarshal([]byte(r.RequestBody), &body); err != nil {
++			t.Fatal(err)
++		}
++		body["tools"] = []json.RawMessage{json.RawMessage(tool)}
++		b, _ := json.Marshal(body)
++		r.RequestBody = string(b)
++		rows = append(rows, r)
++	}
++	expired := fixtureRow(t, "claude_code_stream", "ctx-expired", base.Add(5*time.Second))
++	expired.Path, expired.RequestBody = "/v1/messages", ""
++	insertRaw(t, d, append(rows, expired)...)
++
++	d.batchSize = 2
++	if n, err := d.contextPass(ctx, contextLoopBatches); err != nil || n != 4 {
++		t.Fatalf("first pass = %d, %v", n, err)
++	}
++	if n, err := d.contextPass(ctx, contextLoopBatches); err != nil || n != 0 {
++		t.Fatalf("idle pass = %d, %v", n, err)
++	}
++	if got := scalar(t, d, "SELECT status, count() FROM "+testDB+".request_context GROUP BY status ORDER BY status FORMAT TSV"); got != "no_body\t1\nok\t3" {
++		t.Fatalf("statuses = %q", got)
++	}
++	if got := scalar(t, d, "SELECT count() FROM "+testDB+".context_blobs WHERE kind = 'tool' AND position(content, '\"maximum\":1e3') > 0"); got != "1" {
++		t.Fatalf("tool blobs with exact number = %s", got)
++	}
++
++	// A retried insert duplicates context rows and blobs; results repeat.
++	if err := d.ch.exec(ctx, "SYSTEM STOP MERGES "+testDB+".request_context", nil); err != nil {
++		t.Fatal(err)
++	}
++	if err := d.ch.exec(ctx, "SYSTEM STOP MERGES "+testDB+".context_blobs", nil); err != nil {
++		t.Fatal(err)
++	}
++	for _, q := range []string{
++		"INSERT INTO " + testDB + ".request_context SELECT * FROM " + testDB + ".request_context",
++		"INSERT INTO " + testDB + ".context_blobs SELECT * FROM " + testDB + ".context_blobs",
++	} {
++		if err := d.ch.exec(ctx, q, nil); err != nil {
++			t.Fatal(err)
++		}
++	}
++	facts := func(id string, dir, typ, name, call string, isErr bool) map[string]any {
++		return map[string]any{
++			"request_id": id, "started_at": rows[0].StartedAt, "ingested_at": rows[0].IngestedAt, "kind": "messages",
++			"msg_direction": []string{dir}, "msg_position": []int{0}, "msg_role": []string{"assistant"},
++			"msg_type": []string{typ}, "msg_tool_name": []string{name}, "msg_call_id": []string{call},
++			"msg_arguments": []string{"{}"}, "msg_is_error": []bool{isErr}, "msg_text": []string{""}, "msg_text_hash": []uint64{0},
++		}
++	}
++	extra := []any{
++		facts("ctx-0", "output", "tool_use", "Bash", "c1", false),
++		facts("ctx-0", "output", "tool_use", "Bash", "c1", false), // retried facts insert
++		facts("ctx-1", "output", "tool_use", "Bash", "c2", false),
++		facts("ctx-1", "input", "tool_use", "Bash", "c1", false), // replayed history
++		facts("ctx-1", "input", "tool_result", "", "c1", true),
++		facts("ctx-2", "input", "tool_result", "", "c1", true), // repeated result
++		facts("ctx-2", "input", "tool_result", "", "c2", false),
++	}
++	if err := d.ch.insertJSON(ctx, testDB+".request_facts", extra); err != nil {
++		t.Fatal(err)
++	}
++	got := scalar(t, d, "SELECT name, deferred, requests_offered, calls, errors FROM "+testDB+".tool_versions FORMAT TSV")
++	if got != "Bash\tfalse\t3\t2\t1" {
++		t.Fatalf("tool_versions = %q, want Bash false 3 2 1", got)
++	}
++}
+diff --git a/plugins/clickhouse-sink/deriver/deriver.go b/plugins/clickhouse-sink/deriver/deriver.go
+index 3855282..7cbcb5a 100644
+--- a/plugins/clickhouse-sink/deriver/deriver.go
++++ b/plugins/clickhouse-sink/deriver/deriver.go
+@@ -17,14 +17,16 @@ type deriver struct {
+ 	ch        *clickhouse
+ 	db        string
+ 	batchSize int
+-	redactor  *redact.Redactor
+-	log       *slog.Logger
++	// contextByteCap bounds the request bodies one context batch fetches.
++	contextByteCap uint64
++	redactor       *redact.Redactor
++	log            *slog.Logger
+ 	// extract is extract.Extract; tests replace it to inject a poison row.
+ 	extract func(extract.Row, bool) extract.Facts
+ }
+ 
+ func newDeriver(ch *clickhouse, db string, log *slog.Logger, r *redact.Redactor) *deriver {
+-	return &deriver{ch: ch, db: db, batchSize: 50, log: log, extract: extract.Extract, redactor: r}
++	return &deriver{ch: ch, db: db, batchSize: 50, contextByteCap: 64 << 20, log: log, extract: extract.Extract, redactor: r}
+ }
+ 
+ // setup creates the derived table and views.
+diff --git a/plugins/clickhouse-sink/deriver/main.go b/plugins/clickhouse-sink/deriver/main.go
+index 7323f75..23f4957 100644
+--- a/plugins/clickhouse-sink/deriver/main.go
++++ b/plugins/clickhouse-sink/deriver/main.go
+@@ -59,6 +59,11 @@ func main() {
+ 		if _, err := d.pass(ctx); err != nil && ctx.Err() == nil {
+ 			log.Error("pass failed", "err", err)
+ 		}
++		if n, err := d.contextPass(ctx, contextLoopBatches); err != nil && ctx.Err() == nil {
++			log.Error("context pass failed", "rows", n, "err", err)
++		} else if n > 0 {
++			log.Info("context pass done", "rows", n)
++		}
+ 		select {
+ 		case <-ctx.Done():
+ 			log.Info("deriver stopped")
+diff --git a/plugins/clickhouse-sink/deriver/redact_test.go b/plugins/clickhouse-sink/deriver/redact_test.go
+index c51226a..7976f86 100644
+--- a/plugins/clickhouse-sink/deriver/redact_test.go
++++ b/plugins/clickhouse-sink/deriver/redact_test.go
+@@ -57,3 +57,16 @@ func TestRedactFactsWithoutRedactorClearsText(t *testing.T) {
+ 		t.Errorf("facts = %+v", f)
+ 	}
+ }
++
++func TestRedactorLoadsCountsReloads(t *testing.T) {
++	list := filepath.Join(t.TempDir(), "secrets.txt")
++	if err := os.WriteFile(list, []byte("canary-secret-not-real-0123456789\n"), 0o600); err != nil {
++		t.Fatal(err)
++	}
++	r := testRedactor(t, list)
++	before := r.Loads()
++	r.Configure([]string{list}, nil)
++	if r.Loads() == before {
++		t.Error("a reload did not change Loads")
++	}
++}
+diff --git a/plugins/clickhouse-sink/deriver/schema.go b/plugins/clickhouse-sink/deriver/schema.go
+index 1309786..b46832d 100644
+--- a/plugins/clickhouse-sink/deriver/schema.go
++++ b/plugins/clickhouse-sink/deriver/schema.go
+@@ -103,6 +103,69 @@ LEFT JOIN
+     GROUP BY lifecycle_request_id
+ ) AS u ON u.lifecycle_request_id = f.request_id
+ COMMENT 'request_facts (without message arrays) plus usage per request: tokens summed over attempts, attempts = upstream attempts (0 = no usage matched), final_* = last attempt, cpa_session_id = CPA session identity. For tokens by client/model/day and failure/retry analysis.'`,
++
++	`CREATE TABLE IF NOT EXISTS {db}.context_blobs
++(
++    hash    String COMMENT 'sha256 of content',
++    kind    LowCardinality(String) COMMENT 'tool (canonical JSON definition), system (system prompt block text) or billing (per-request billing block)',
++    name    LowCardinality(String) COMMENT 'Tool name (or server tool type); empty for system blocks',
++    content String COMMENT 'Redacted content. Tools: sorted-key JSON without cache_control, numbers as sent' CODEC(ZSTD(3))
++)
++ENGINE = ReplacingMergeTree
++ORDER BY (kind, hash)
++COMMENT 'Every distinct tool definition and system prompt block Claude Code sent, once, kept forever. Read with GROUP BY (kind, hash) or FINAL: duplicates exist until merges.'`,
++
++	`CREATE TABLE IF NOT EXISTS {db}.request_context
++(
++    request_id    String COMMENT 'Joins requests.request_id and request_facts.request_id',
++    started_at    DateTime64(9, 'UTC') COMMENT 'Copied from requests.started_at',
++    ingested_at   DateTime64(9, 'UTC') COMMENT 'Copied from requests.ingested_at; the context pass watermark',
++    session_id    String COMMENT 'x-claude-code-session-id; matches T3 provider thread records',
++    agent_id      String COMMENT 'x-claude-code-agent-id; empty for the main agent',
++    tool_hashes   Array(String) COMMENT 'context_blobs (kind tool) hashes, in the order offered',
++    system_hashes Array(String) COMMENT 'context_blobs (kind system or billing) hashes, in order',
++    status        LowCardinality(String) COMMENT 'ok, no_body (raw body expired or absent), unparseable, redaction_failed'
++)
++ENGINE = ReplacingMergeTree
++PARTITION BY toYYYYMM(started_at)
++ORDER BY (started_at, request_id)
++COMMENT 'Which tool definitions and system blocks each /v1/messages request carried, kept forever. One row per request after merges; GROUP BY request_id before counting.'`,
++
++	`CREATE OR REPLACE VIEW {db}.tool_versions AS
++WITH
++    blobs AS (
++        SELECT hash, any(name) AS name, any(content) AS content
++        FROM {db}.context_blobs WHERE kind = 'tool' GROUP BY hash),
++    ctx AS (
++        SELECT request_id, any(started_at) AS started_at, any(tool_hashes) AS tool_hashes
++        FROM {db}.request_context WHERE status = 'ok' GROUP BY request_id),
++    offers AS (
++        SELECT c.request_id AS request_id, c.started_at AS started_at, b.hash AS hash, b.name AS name, b.content AS content
++        FROM ctx AS c ARRAY JOIN c.tool_hashes AS h
++        INNER JOIN blobs AS b ON b.hash = h),
++    calls AS (
++        SELECT DISTINCT request_id, position, call_id, tool_name
++        FROM {db}.messages
++        WHERE type IN ('tool_use', 'server_tool_use') AND direction = 'output'),
++    results AS (
++        SELECT call_id, max(is_error) AS is_error
++        FROM {db}.messages
++        WHERE type IN ('tool_result', 'web_search_tool_result') AND call_id != ''
++        GROUP BY call_id)
++SELECT
++    o.name AS name,
++    o.hash AS hash,
++    toBool(any(JSONExtractBool(o.content, 'defer_loading'))) AS deferred,
++    min(o.started_at) AS first_seen,
++    max(o.started_at) AS last_seen,
++    uniqExact(o.request_id) AS requests_offered,
++    countIf(c.call_id != '') AS calls,
++    countIf(c.call_id != '' AND r.is_error) AS errors
++FROM offers AS o
++LEFT JOIN calls AS c ON c.request_id = o.request_id AND c.tool_name = o.name
++LEFT JOIN results AS r ON r.call_id = c.call_id
++GROUP BY o.name, o.hash
++COMMENT 'One row per tool definition version: when it was offered, how often the model called it in those requests, and how many of those calls returned an error. deferred = definition loaded on demand (tool search). For comparing description edits.'`,
+ }
+ 
+ func schemaFor(stmts []string, db string) []string {
 diff --git a/plugins/clickhouse-sink/main.go b/plugins/clickhouse-sink/main.go
 index 38541b0..16c17f7 100644
 --- a/plugins/clickhouse-sink/main.go
@@ -703,7 +1501,7 @@ index 30d3cd5..425d696 100644
  	out := make([]string, 0, len(h))
  	for _, v := range h {
 diff --git a/plugins/clickhouse-sink/redact/redact.go b/plugins/clickhouse-sink/redact/redact.go
-index dfcf395..5c11846 100644
+index dfcf395..e1fb93e 100644
 --- a/plugins/clickhouse-sink/redact/redact.go
 +++ b/plugins/clickhouse-sink/redact/redact.go
 @@ -31,7 +31,9 @@ const (
@@ -717,16 +1515,17 @@ index dfcf395..5c11846 100644
  	// RuleKnown names matches of configured secret values.
  	RuleKnown = "known"
  )
-@@ -63,6 +65,8 @@ type Redactor struct {
+@@ -63,6 +65,9 @@ type Redactor struct {
  	mtimes    map[string]time.Time
  	lastCheck time.Time
  	known     map[string]string // encoded form -> replacement
 +	failed    []string          // sources the last load could not read
 +	loaded    bool              // a full load has run since Configure
++	loads     uint64            // full loads so far; see Loads
  	disabled  map[string]bool
  
  	detector *detect.Detector
-@@ -90,6 +94,7 @@ func (r *Redactor) Configure(files, disabledRules []string) {
+@@ -90,6 +95,7 @@ func (r *Redactor) Configure(files, disabledRules []string) {
  	}
  	r.lastCheck = time.Time{}
  	r.mtimes = map[string]time.Time{}
@@ -734,7 +1533,7 @@ index dfcf395..5c11846 100644
  	r.mu.Unlock()
  	r.reloadIfStale(time.Now())
  }
-@@ -204,9 +209,13 @@ func (r *Redactor) reloadIfStale(now time.Time) {
+@@ -204,9 +210,13 @@ func (r *Redactor) reloadIfStale(now time.Time) {
  	old := r.mtimes
  	r.mu.Unlock()
  
@@ -750,7 +1549,7 @@ index dfcf395..5c11846 100644
  	for _, p := range paths {
  		info, errStat := os.Stat(p)
  		if errStat != nil {
-@@ -223,25 +232,53 @@ func (r *Redactor) reloadIfStale(now time.Time) {
+@@ -223,25 +233,63 @@ func (r *Redactor) reloadIfStale(now time.Time) {
  		r.mu.Unlock()
  		return
  	}
@@ -782,6 +1581,7 @@ index dfcf395..5c11846 100644
  	r.known = known
 +	r.failed = failed
 +	r.loaded = true
++	r.loads++
  	r.mtimes = mtimes
  	r.lastCheck = now
  	r.mu.Unlock()
@@ -790,6 +1590,15 @@ index dfcf395..5c11846 100644
 -// expandFiles turns directories into the files inside them (one level).
 -func expandFiles(files []string) []string {
 -	var out []string
++// Loads counts full loads of the secret set. A caller that redacts a batch
++// with several replacers compares it before and after: unchanged (and
++// Failed empty) means every replacer saw the same complete set.
++func (r *Redactor) Loads() uint64 {
++	r.mu.Lock()
++	defer r.mu.Unlock()
++	return r.loads
++}
++
 +// Failed lists the sources the last load could not read or parse; empty
 +// means the known-secret set is complete.
 +func (r *Redactor) Failed() []string {
@@ -809,7 +1618,7 @@ index dfcf395..5c11846 100644
  			continue
  		}
  		if !info.IsDir() {
-@@ -250,6 +287,7 @@ func expandFiles(files []string) []string {
+@@ -250,6 +298,7 @@ func expandFiles(files []string) []string {
  		}
  		entries, errRead := os.ReadDir(f)
  		if errRead != nil {
@@ -817,7 +1626,7 @@ index dfcf395..5c11846 100644
  			continue
  		}
  		for _, e := range entries {
-@@ -259,7 +297,7 @@ func expandFiles(files []string) []string {
+@@ -259,7 +308,7 @@ func expandFiles(files []string) []string {
  		}
  	}
  	sort.Strings(out)
@@ -826,7 +1635,7 @@ index dfcf395..5c11846 100644
  }
  
  // addKnown registers a secret in the forms it can appear in a body: raw,
-@@ -282,25 +320,26 @@ func addKnown(known map[string]string, secret string) {
+@@ -282,25 +331,26 @@ func addKnown(known map[string]string, secret string) {
  
  // readSecrets extracts credentials from one file, chosen by its name:
  // .json and .yaml/.yml by key name, .env by value, anything else one per line.
@@ -859,7 +1668,7 @@ index dfcf395..5c11846 100644
  	case name == ".env" || strings.HasSuffix(name, ".env"):
  		var out []string
  		sc := bufio.NewScanner(bytes.NewReader(raw))
-@@ -313,7 +352,7 @@ func readSecrets(path string) []string {
+@@ -313,7 +363,7 @@ func readSecrets(path string) []string {
  				out = append(out, strings.Trim(strings.TrimSpace(value), `"'`))
  			}
  		}
@@ -868,7 +1677,7 @@ index dfcf395..5c11846 100644
  	default:
  		var out []string
  		sc := bufio.NewScanner(bytes.NewReader(raw))
-@@ -322,7 +361,7 @@ func readSecrets(path string) []string {
+@@ -322,7 +372,7 @@ func readSecrets(path string) []string {
  				out = append(out, line)
  			}
  		}

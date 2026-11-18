@@ -1230,24 +1230,33 @@ index 7323f75..23f4957 100644
  		case <-ctx.Done():
  			log.Info("deriver stopped")
 diff --git a/plugins/clickhouse-sink/deriver/redact_test.go b/plugins/clickhouse-sink/deriver/redact_test.go
-index c51226a..7976f86 100644
+index c51226a..bfea8fa 100644
 --- a/plugins/clickhouse-sink/deriver/redact_test.go
 +++ b/plugins/clickhouse-sink/deriver/redact_test.go
-@@ -57,3 +57,16 @@ func TestRedactFactsWithoutRedactorClearsText(t *testing.T) {
+@@ -57,3 +57,25 @@ func TestRedactFactsWithoutRedactorClearsText(t *testing.T) {
  		t.Errorf("facts = %+v", f)
  	}
  }
 +
-+func TestRedactorLoadsCountsReloads(t *testing.T) {
++func TestRedactorLoadsCountsChangedSets(t *testing.T) {
 +	list := filepath.Join(t.TempDir(), "secrets.txt")
-+	if err := os.WriteFile(list, []byte("canary-secret-not-real-0123456789\n"), 0o600); err != nil {
-+		t.Fatal(err)
++	write := func(body string) {
++		if err := os.WriteFile(list, []byte(body), 0o600); err != nil {
++			t.Fatal(err)
++		}
 +	}
++	write("canary-secret-not-real-0123456789\n")
 +	r := testRedactor(t, list)
 +	before := r.Loads()
++	write("canary-secret-not-real-0123456789\n# touched\n")
++	r.Configure([]string{list}, nil)
++	if r.Loads() != before {
++		t.Error("a reload with the same secrets changed Loads")
++	}
++	write("canary-secret-not-real-0123456789\nanother-canary-not-real-98765\n")
 +	r.Configure([]string{list}, nil)
 +	if r.Loads() == before {
-+		t.Error("a reload did not change Loads")
++		t.Error("a new secret did not change Loads")
 +	}
 +}
 diff --git a/plugins/clickhouse-sink/deriver/schema.go b/plugins/clickhouse-sink/deriver/schema.go
@@ -1490,7 +1499,7 @@ index 30d3cd5..425d696 100644
  	out := make([]string, 0, len(h))
  	for _, v := range h {
 diff --git a/plugins/clickhouse-sink/redact/redact.go b/plugins/clickhouse-sink/redact/redact.go
-index dfcf395..e1fb93e 100644
+index dfcf395..420ec43 100644
 --- a/plugins/clickhouse-sink/redact/redact.go
 +++ b/plugins/clickhouse-sink/redact/redact.go
 @@ -31,7 +31,9 @@ const (
@@ -1510,7 +1519,7 @@ index dfcf395..e1fb93e 100644
  	known     map[string]string // encoded form -> replacement
 +	failed    []string          // sources the last load could not read
 +	loaded    bool              // a full load has run since Configure
-+	loads     uint64            // full loads so far; see Loads
++	loads     uint64            // loads that changed the secret set; see Loads
  	disabled  map[string]bool
  
  	detector *detect.Detector
@@ -1538,7 +1547,7 @@ index dfcf395..e1fb93e 100644
  	for _, p := range paths {
  		info, errStat := os.Stat(p)
  		if errStat != nil {
-@@ -223,25 +233,63 @@ func (r *Redactor) reloadIfStale(now time.Time) {
+@@ -223,25 +233,67 @@ func (r *Redactor) reloadIfStale(now time.Time) {
  		r.mu.Unlock()
  		return
  	}
@@ -1567,10 +1576,14 @@ index dfcf395..e1fb93e 100644
  		}
  	}
  	r.mu.Lock()
++	// Only a different secret set counts as a new load: the auth directory
++	// holds a live database that changes all the time without new secrets.
++	if len(known) != len(r.known) {
++		r.loads++
++	}
  	r.known = known
 +	r.failed = failed
 +	r.loaded = true
-+	r.loads++
  	r.mtimes = mtimes
  	r.lastCheck = now
  	r.mu.Unlock()
@@ -1579,7 +1592,7 @@ index dfcf395..e1fb93e 100644
 -// expandFiles turns directories into the files inside them (one level).
 -func expandFiles(files []string) []string {
 -	var out []string
-+// Loads counts full loads of the secret set. A caller that redacts a batch
++// Loads counts loads that changed the secret set. A caller that redacts a batch
 +// with several replacers compares it before and after: unchanged (and
 +// Failed empty) means every replacer saw the same complete set.
 +func (r *Redactor) Loads() uint64 {
@@ -1607,7 +1620,7 @@ index dfcf395..e1fb93e 100644
  			continue
  		}
  		if !info.IsDir() {
-@@ -250,6 +298,7 @@ func expandFiles(files []string) []string {
+@@ -250,6 +302,7 @@ func expandFiles(files []string) []string {
  		}
  		entries, errRead := os.ReadDir(f)
  		if errRead != nil {
@@ -1615,7 +1628,7 @@ index dfcf395..e1fb93e 100644
  			continue
  		}
  		for _, e := range entries {
-@@ -259,7 +308,7 @@ func expandFiles(files []string) []string {
+@@ -259,7 +312,7 @@ func expandFiles(files []string) []string {
  		}
  	}
  	sort.Strings(out)
@@ -1624,7 +1637,7 @@ index dfcf395..e1fb93e 100644
  }
  
  // addKnown registers a secret in the forms it can appear in a body: raw,
-@@ -282,25 +331,26 @@ func addKnown(known map[string]string, secret string) {
+@@ -282,25 +335,26 @@ func addKnown(known map[string]string, secret string) {
  
  // readSecrets extracts credentials from one file, chosen by its name:
  // .json and .yaml/.yml by key name, .env by value, anything else one per line.
@@ -1657,7 +1670,7 @@ index dfcf395..e1fb93e 100644
  	case name == ".env" || strings.HasSuffix(name, ".env"):
  		var out []string
  		sc := bufio.NewScanner(bytes.NewReader(raw))
-@@ -313,7 +363,7 @@ func readSecrets(path string) []string {
+@@ -313,7 +367,7 @@ func readSecrets(path string) []string {
  				out = append(out, strings.Trim(strings.TrimSpace(value), `"'`))
  			}
  		}
@@ -1666,7 +1679,7 @@ index dfcf395..e1fb93e 100644
  	default:
  		var out []string
  		sc := bufio.NewScanner(bytes.NewReader(raw))
-@@ -322,7 +372,7 @@ func readSecrets(path string) []string {
+@@ -322,7 +376,7 @@ func readSecrets(path string) []string {
  				out = append(out, line)
  			}
  		}

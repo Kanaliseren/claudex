@@ -539,10 +539,10 @@ index d42a0ff..0ac460b 100644
  // do runs one statement. With data != nil the statement goes into the URL and
 diff --git a/plugins/clickhouse-sink/deriver/context.go b/plugins/clickhouse-sink/deriver/context.go
 new file mode 100644
-index 0000000..be95ed6
+index 0000000..aade33c
 --- /dev/null
 +++ b/plugins/clickhouse-sink/deriver/context.go
-@@ -0,0 +1,410 @@
+@@ -0,0 +1,416 @@
 +package main
 +
 +import (
@@ -759,6 +759,10 @@ index 0000000..be95ed6
 +// batch. After a restart some are written again; ReplacingMergeTree merges
 +// them and every reader groups by (kind, hash).
 +func (d *deriver) newBlobs(blobs []contextBlob) []any {
++	// Bounded: forgetting only means a blob is written once more.
++	if len(d.blobsWritten) > maxBlobsWritten {
++		clear(d.blobsWritten)
++	}
 +	var out []any
 +	for _, b := range blobs {
 +		k := blobKey{b.Kind, b.Hash}
@@ -771,6 +775,8 @@ index 0000000..be95ed6
 +}
 +
 +type blobKey struct{ kind, hash string }
++
++const maxBlobsWritten = 100_000
 +
 +// buildContext turns one request into its request_context row and every blob
 +// that row references (newBlobs drops those already stored).

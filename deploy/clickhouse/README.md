@@ -91,8 +91,9 @@ still inside the 3-day window.
   `(kind, hash)` before counting. `tool_versions` already does.
 - Codex is not proxied; its instructions and tools are in its own
   `~/.codex/sessions` rollouts.
-- Changing the hash rule changes every hash: truncate both tables and let the
-  deriver rebuild them, which only covers bodies still inside the raw window.
+- Changing the hash rule changes every hash: stop the deriver, truncate
+  `request_context` and `context_blobs`, then start it again (it remembers
+  which blobs it wrote). It rebuilds only bodies still inside the raw window.
 
 ```sql
 -- Description versions of one tool and how the model used each.

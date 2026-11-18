@@ -1499,7 +1499,7 @@ index 30d3cd5..425d696 100644
  	out := make([]string, 0, len(h))
  	for _, v := range h {
 diff --git a/plugins/clickhouse-sink/redact/redact.go b/plugins/clickhouse-sink/redact/redact.go
-index dfcf395..63d6819 100644
+index dfcf395..f0319ce 100644
 --- a/plugins/clickhouse-sink/redact/redact.go
 +++ b/plugins/clickhouse-sink/redact/redact.go
 @@ -31,7 +31,9 @@ const (
@@ -1547,7 +1547,7 @@ index dfcf395..63d6819 100644
  	for _, p := range paths {
  		info, errStat := os.Stat(p)
  		if errStat != nil {
-@@ -223,25 +233,70 @@ func (r *Redactor) reloadIfStale(now time.Time) {
+@@ -223,25 +233,71 @@ func (r *Redactor) reloadIfStale(now time.Time) {
  		r.mu.Unlock()
  		return
  	}
@@ -1580,8 +1580,9 @@ index dfcf395..63d6819 100644
 +	// Only a different secret set counts as a new load: the auth directory
 +	// holds a live database that changes all the time without new secrets.
 +	// The set only grows, so the same size means the same set, except after
-+	// a reset.
-+	if reset || len(known) != len(r.known) {
++	// a reset. A load with an unreadable source also counts: a secret could
++	// have come and gone while it was unreadable.
++	if reset || len(failed) > 0 || len(known) != len(r.known) {
 +		r.loads++
 +	}
  	r.known = known
@@ -1623,7 +1624,7 @@ index dfcf395..63d6819 100644
  			continue
  		}
  		if !info.IsDir() {
-@@ -250,6 +305,7 @@ func expandFiles(files []string) []string {
+@@ -250,6 +306,7 @@ func expandFiles(files []string) []string {
  		}
  		entries, errRead := os.ReadDir(f)
  		if errRead != nil {
@@ -1631,7 +1632,7 @@ index dfcf395..63d6819 100644
  			continue
  		}
  		for _, e := range entries {
-@@ -259,7 +315,7 @@ func expandFiles(files []string) []string {
+@@ -259,7 +316,7 @@ func expandFiles(files []string) []string {
  		}
  	}
  	sort.Strings(out)
@@ -1640,7 +1641,7 @@ index dfcf395..63d6819 100644
  }
  
  // addKnown registers a secret in the forms it can appear in a body: raw,
-@@ -282,25 +338,26 @@ func addKnown(known map[string]string, secret string) {
+@@ -282,25 +339,26 @@ func addKnown(known map[string]string, secret string) {
  
  // readSecrets extracts credentials from one file, chosen by its name:
  // .json and .yaml/.yml by key name, .env by value, anything else one per line.
@@ -1673,7 +1674,7 @@ index dfcf395..63d6819 100644
  	case name == ".env" || strings.HasSuffix(name, ".env"):
  		var out []string
  		sc := bufio.NewScanner(bytes.NewReader(raw))
-@@ -313,7 +370,7 @@ func readSecrets(path string) []string {
+@@ -313,7 +371,7 @@ func readSecrets(path string) []string {
  				out = append(out, strings.Trim(strings.TrimSpace(value), `"'`))
  			}
  		}
@@ -1682,7 +1683,7 @@ index dfcf395..63d6819 100644
  	default:
  		var out []string
  		sc := bufio.NewScanner(bytes.NewReader(raw))
-@@ -322,7 +379,7 @@ func readSecrets(path string) []string {
+@@ -322,7 +380,7 @@ func readSecrets(path string) []string {
  				out = append(out, line)
  			}
  		}

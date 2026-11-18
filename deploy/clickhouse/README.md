@@ -71,6 +71,55 @@ curl -s -K <(printf 'user = "claudex_reader:%s"\n' "$(cat ~/.config/claudex/clic
   "SELECT started_at, role, substring(text, 1, 200) FROM cliproxy.messages WHERE text ILIKE '%migration%' ORDER BY started_at DESC LIMIT 20"
 ```
 
+## Context ledger
+
+T3 Code keeps the conversation; this keeps what else Claude Code sent with
+it, so a tool description or prompt edit can be compared with how models used
+it afterwards. The deriver stores every distinct tool definition and system
+prompt block once in `context_blobs`, and per `/v1/messages` request the
+ordered hashes it carried in `request_context`. Both are kept forever (about
+1 MB per few hundred definitions). On first start it backfills every raw body
+still inside the 3-day window.
+
+- Tools are stored as sorted-key JSON without `cache_control`, numbers as
+  sent. Any other change, including `defer_loading`, is a new version.
+- System blocks are stored by text alone. Claude Code's per-request billing
+  block is kind `billing`; skip it when comparing prompt versions.
+- Redaction runs on the decoded strings, so JSON escapes cannot hide a
+  secret. A batch whose secret set reloads mid-way is retried.
+- Both tables are ReplacingMergeTree: group by `request_id` or
+  `(kind, hash)` before counting. `tool_versions` already does.
+- Codex is not proxied; its instructions and tools are in its own
+  `~/.codex/sessions` rollouts.
+- Changing the hash rule changes every hash: stop the deriver, truncate
+  `request_context` and `context_blobs`, then start it again (it remembers
+  which blobs it wrote). It rebuilds only bodies still inside the raw window.
+
+```sql
+-- Description versions of one tool and how the model used each.
+SELECT * FROM cliproxy.tool_versions WHERE name = 'Bash' ORDER BY first_seen;
+
+-- The definitions a T3 thread's Claude session was offered (session id from
+-- T3's provider thread records).
+SELECT DISTINCT b.name, b.hash
+FROM cliproxy.request_context AS c ARRAY JOIN c.tool_hashes AS h
+JOIN cliproxy.context_blobs AS b ON b.kind = 'tool' AND b.hash = h
+WHERE c.session_id = '<session id>';
+
+-- System prompt versions over time, billing blocks excluded.
+SELECT h, min(c.started_at) AS first_seen, max(c.started_at) AS last_seen, uniqExact(c.request_id) AS requests
+FROM cliproxy.request_context AS c ARRAY JOIN c.system_hashes AS h
+WHERE h IN (SELECT hash FROM cliproxy.context_blobs WHERE kind = 'system')
+GROUP BY h ORDER BY first_seen;
+```
+
+`tool_versions` counts a call when the model emitted it in a request that
+offered that version; results are deduplicated per call. Server tools such
+as `web_search` count `server_tool_use` calls, but not their errors: the
+extractor does not read the nested error a failed web search returns.
+Requests whose raw body was already gone are skipped (rows written before
+that rule have status `no_body`).
+
 ## Disk use and retention
 
 Agents resend the whole conversation on every turn, so raw request bodies grow
@@ -116,6 +165,8 @@ metadata.
   completion whose request never arrived;
 - the collector only accepts the tap's methods and waits for a complete secret
   set before listening;
+- the deriver also fills the context ledger (above), with a `Loads` counter
+  on the redactor so a batch never mixes secret sets;
 - speed: gitleaks runs on RE2 (`gore2regex`, its supported alternative
   engine; same rules, whole text), so a real 2 MB agent request takes ~0.25 s
   instead of 5.3 s. Finished requests are redacted on workers holding at most
